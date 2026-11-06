@@ -22,7 +22,7 @@ function start() {
   const text = Text.create();
   text.setParent(retained.board);
   text.setSize([640, 480, 0]);
-  text.setText("My First App");
+  text.setText("今天必须处理 · 1 项");
   text.getLocalStyle().setTextColor(Color.fromRGB8(0, 255, 0));
   text.getLocalStyle().setTextFont(Font.getCachedFont("", 28, 0, 0));
   text.getLocalStyle().setTextAlign(TextAlign.CENTER);
