@@ -23,6 +23,21 @@ const NO_WORDS = [
   "不用了", "不用", "不要了", "不要", "不必", "不加了", "不加", "不存", "别加", "别存",
   "不需要", "不想", "算了", "蒜了", "酸了", "不了", "先不", "不行", "不做", "免了", "不啦",
 ];
+/* 「真的要存进菜单」的明确说法。
+ * ★ 为什么要单独列一张表：第一问里说「好」「要」「可以」是**含糊**的 ——
+ *   用户可能是回答"做好了""等下"（ASR 把「算了」听成「好了」也很常见），
+ *   以前这些都被 isYes 判成"存"，于是"说了算了还是存进去了"。
+ *   现在只认这张表里的明确说法，含糊的一律回问一次，宁可多问一句不误存。 */
+const SAVE_WORDS = [
+  "加进去", "加进", "加上", "加入", "加吧", "加一个", "加",
+  "存进", "存起来", "存下来", "存着", "保存", "存",
+  "留下", "留着", "记下来", "收录", "列入",
+];
+
+/* 明确"我要走 / 换一道"的说法：这一问里直接算不存 + 回菜单。
+ * ★ 只收明确的，"继续 / 下一道"这类在一问里含糊（可能是回答"做好了"），不收。 */
+const LEAVE_WORDS = ["换菜", "换个菜", "换一道", "菜单", "选菜", "重新选", "不做了", "收工"];
+
 /* 想换一道菜（在任何一问里都算"这道结束了，回菜单"） */
 const MENU_WORDS = [
   "换菜", "换个菜", "菜单", "选菜", "重新选", "换一道", "换个菜做",
@@ -69,8 +84,10 @@ function decide(stage, text) {
 
   if (stage === "askSave") {
     if (isNo(t)) return { act: "skip", say: "好，这次不存" };
-    if (isYes(t)) return { act: "save", say: "好，存进菜单" };
-    if (hasAny(t, MENU_WORDS)) return { act: "skipMenu", say: "不存了，回菜单" };
+    // ★ 先否定、再"明确存"、最后才看一般肯定 —— 含糊的「好 / 要 / 可以」只回问
+    if (hasAny(t, SAVE_WORDS)) return { act: "save", say: "好，存进菜单" };
+    if (hasAny(t, LEAVE_WORDS)) return { act: "skipMenu", say: "不存了，回菜单" };
+    if (isYes(t)) return { act: "retry", say: "要存进菜单吗？说「加进去」，不存就说「算了」" };
     return { act: "retry", say: "说「加进去」或「算了」" };
   }
 
@@ -93,4 +110,4 @@ const VOCAB = [
   "好", "好的", "下一道", "再做一道", "再来一道", "换菜", "菜单", "继续", "收工",
 ];
 
-module.exports = { decide, isYes, isNo, VOCAB, YES_WORDS, NO_WORDS, MENU_WORDS, STOP_WORDS };
+module.exports = { decide, isYes, isNo, VOCAB, YES_WORDS, NO_WORDS, MENU_WORDS, STOP_WORDS, SAVE_WORDS, LEAVE_WORDS };

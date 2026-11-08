@@ -20,11 +20,11 @@ const llm = require("./llm-bridge");
 const agent = require("./agent");      // 联网问答：先自己答，答不上再查（没配 search 时等同于 llm.advise）
 const store = require("./dish-store"); // 收藏的菜（做完说「加进去」→ 下次出现在菜单最前面）
 const wrapFlow = require("./wrap");    // 收尾问答：是否收藏 / 是否再做一道 / 收工
-// 注：不再引用 menu.js —— 菜单已取消分页，序号就是 1-N 的全局序号（见 pickByIndex）
+const menuPage = require("./menu-page"); // 菜单翻页（一页 12 行，多了翻页，见 src/menu-page.js）
 
 const view = {};
 // ★ 版本号显示在界面左上角，一眼确认跑的是不是最新包（防止 run 错旧的备份 .fuiapp）
-const APP_VER = "v58c";
+const APP_VER = "v58e";
 
 /* ============================================================================
  * ★ 字号总控 —— 想改字的大小，只改下面这一个数字
@@ -64,6 +64,7 @@ const app = {
   mode: "menu",      // menu=选菜中 | cooking=跟做中
   dishIndex: -1,     // 当前选中的菜（DISHES 下标）
   menuSelected: -1,  // 菜单里高亮的那道（推荐时标出来），-1=不高亮
+  menuPage: 0,       // 当前是第几页（0 起）。一页 12 道，多了靠说「下一页」翻
   busy: false,       // ASR 识别中
   said: null,        // 我刚说的那句话 { text, until }（上面那行 🗣）
   micWanted: true,   // 前台时保持持续监听
@@ -166,12 +167,14 @@ const SPICY_TITLES = ["麻婆豆腐"];
 
 // ---- 识别词表：按当前场景收缩 ----
 // 小模型是「词表越小越准」，所以菜单只认菜名 + 序号，跟做只认指令词
-// ★ 不再放「下一页/上一页/翻页」：翻页模式已取消，这些词留在词表里只会
-//   让模型把别的口令往它们身上猜（用户反馈「下一页」死活识别不出来）。
-//   换成 1-12 的中文数字，说序号选菜才准。
+// ★ v58e 起菜单重新有翻页，所以「下一页 / 上一页 / 翻页」必须回到词表里 ——
+//   不在词表里的词，本地小模型根本"拼"不出来（用户之前反馈过「下一页」识别不出来，
+//   那次是因为翻页被取消了；现在翻页真的要用，词得给回去）。
+//   数字仍只到「十二」：编号是按本页算的，一页就 12 道。
 const MENU_VOCAB = DISHES.map((d) => d.title).concat(
   ["推荐", "随便", "帮我选", "菜单", "换菜", "选菜", "做什么菜",
     "一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二",
+    "下一页", "上一页", "翻页", "下一屏",
     "不吃辣", "不要辣", "别太辣", "能吃辣", "要辣的"]);
 /* ★ 救场词表：这些词必须进识别词表，否则小模型根本"拼"不出来。
    实测证据（日志原文）：用户说「太咸了 / 糊了」，模型输出的是
@@ -246,11 +249,13 @@ function dishNegated(text, pos) {
   return /(不要|不想|不用|不吃|不做|别|算了)/.test(head);
 }
 
-/* 菜单序号：界面上印的 1-N 就是全局序号，说「5」「第五个」「第11道」都能选。
-   不翻页了，所以不需要按页偏移，序号和菜一一对应，永远不会对错。 */
+/* 菜单序号：**按本页算**（本页印 1-12，说「5」就是本页第 5 道）。
+   v58e 起菜单重新支持翻页，所以这里带一个 offset：第 2 页的「3」= 全局第 15 道。
+   为什么不印全局号：识别词表里只有「一…十二」，说「十三」小模型拼不出来，
+   页内编号才能一直说下去。 */
 const CN_DIGIT = { "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9 };
 
-function pickByIndex(text, total) {
+function pickByIndex(text, total, offset) {
   // 「等一会儿」「一下」「一点」里的「一」不是序号 —— 以前会把「再等一会儿」当成为 1 号，
   // 直接把番茄炒蛋开做了。先把这类口语里的「一」摘掉再认数字。
   const t = String(text || "").trim().replace(/一(会儿|下|点|起|直|样|些|边|定|共|块|阵)/g, "");
@@ -280,7 +285,7 @@ function pickByIndex(text, total) {
     }
   }
   const max = Math.min(total || 0, MENU_MAX);
-  if (n >= 1 && n <= max) return n - 1;
+  if (n >= 1 && n <= max) return (offset || 0) + n - 1;
   return -1;
 }
 
@@ -362,23 +367,6 @@ function nearWordDist(word, title) {
   return 99;
 }
 
-/** 带权编辑距离：同音字替换不计费，其余替换/增删各计 1（保留给旧测试用） */
-function fuzzyDist(a, b) {
-  const n = a.length, m = b.length;
-  const d = [];
-  for (let i = 0; i <= n; i++) { d.push(new Array(m + 1).fill(0)); d[i][0] = i; }
-  for (let j = 0; j <= m; j++) d[0][j] = j;
-  for (let i = 1; i <= n; i++) {
-    for (let j = 1; j <= m; j++) {
-      const sub = d[i - 1][j - 1] + (homoEq(a[i - 1], b[j - 1]) ? 0 : 1);
-      const del = d[i - 1][j] + 1;
-      const ins = d[i][j - 1] + 1;
-      d[i][j] = sub < del ? (sub < ins ? sub : ins) : (del < ins ? del : ins);
-    }
-  }
-  return d[n][m];
-}
-
 // 最近一次容错命中的信息，给界面显示「听成 X → 理解成 Y」
 let lastFuzzy = null;
 
@@ -445,8 +433,10 @@ function nearMissOf(heard, title) {
   return false;
 }
 
-/** 把一句话匹配到某道菜（先精确菜名，再别名/关键词，再同音容错，最后序号 1-11） */
-function matchDish(text) {
+/** 把一句话匹配到某道菜（先精确菜名，再别名/关键词，再同音容错，最后页内序号）
+ *  numLimit / numOffset：页内编号的上限与跨页偏移；不传 = 全菜单 1-12 当一页用。
+ *  菜名匹配不受页码限制 —— 菜名永远能跨页找到。 */
+function matchDish(text, numLimit, numOffset) {
   const t = String(text);
   for (let i = 0; i < DISHES.length; i++) {
     const at = t.indexOf(DISHES[i].title);
@@ -470,8 +460,12 @@ function matchDish(text) {
     }
   }
   if (bestWord >= 0) return bestWord;
-  // 序号选菜：界面上印几号就是几号，不用换算
-  const byNum = pickByIndex(t, DISHES.length);
+  // 序号选菜：按当前页印的号算（第 2 页说「3」= 全局第 15 道）
+  const byNum = pickByIndex(
+    t,
+    numLimit === undefined ? DISHES.length : numLimit,
+    numOffset || 0
+  );
   if (byNum >= 0) return byNum;
   // 最后兜一层：同音字被听错了（「马婆豆腐」）
   lastFuzzy = null;
@@ -480,14 +474,25 @@ function matchDish(text) {
 
 function paintMenu() {
   const total = DISHES.length;
-  const shownMax = Math.min(total, MENU_MAX);
+  // ★ v58e：菜可能"少了一道"（收尾说「算了」，那道生成菜被撤掉），页码要跟着收回来，
+  //   否则会停在一个空页上，看起来像菜单丢了。
+  const pages = menuPage.pageCount(total);
+  const page = menuPage.clamp(app.menuPage, total);
+  if (page !== app.menuPage) app.menuPage = page;
+  const onPage = menuPage.countOn(page, total);
+  // 页码/总数变了才记一行：翻页有没有真的生效、菜有没有被顶掉，看日志就知道
+  const sig = page + "/" + pages + " n=" + total;
+  if (shown.menuSig !== sig) {
+    shown.menuSig = sig;
+    dlog("COOK_MENU page=" + (page + 1) + "/" + pages + " n=" + total + " onPage=" + onPage);
+  }
   app.paintStage = "menu:applyMain";
   applyMainLayout(true);
   app.paintStage = "menu:progress";
-  // ★ v83：顶栏只留必要信息。原来那句「菜单 · 请说对应编号（1-11）· v58」
-  //   又长又抢眼，一屏小字挤在顶上不好看。现在压成三段：菜单 / 编号范围 / 版本号。
+  // ★ v83：顶栏只留必要信息。★ v58e：多页时补一段「2/3 页」，编号按本页算。
   setText(view.progress, shown, "progress",
-    "菜单 · 1-" + shownMax + " · " + APP_VER);
+    "菜单 · " + (pages > 1 ? (page + 1) + "/" + pages + " 页 · " : "")
+      + "编号 1-" + onPage + " · " + APP_VER);
   app.paintStage = "menu:main";
   setText(view.main, shown, "main", "今天做什么菜？");
   app.paintStage = "menu:sub";
@@ -508,7 +513,8 @@ function paintMenu() {
   setText(view.timer, shown, "timer", "");   // 菜单页没有倒计时
   app.paintStage = "menu:footer";
   setText(view.footer, shown, "footer",
-    "🎙 说编号或菜名 · 「不吃辣」避开辣菜");
+    (pages > 1 ? "🎙 说本页编号或菜名 · 「下一页」翻页" : "🎙 说编号或菜名")
+      + " · 「不吃辣」避开辣菜");
   app.paintStage = "menu:done";
 }
 
@@ -589,6 +595,9 @@ function styleRow(i, o) {
 
 function beginPick(i) {
   if (app.pickAnim) return;
+  // ★ v58e：选中的菜可能不在当前页（说菜名 / 推荐跨页）——先把页翻过去，
+  //   否则动画会在别的行上放大，或者压根看不到。
+  app.menuPage = menuPage.pageOf(i, DISHES.length);
   app.menuSelected = i;
   app.pickAnim = { index: i, t0: performance.now() };
   dlog("COOK_PICK begin idx=" + i + " t0=" + Math.round(app.pickAnim.t0));
@@ -647,33 +656,42 @@ function drivePick() {
 }
 
 function paintMenuRows() {
-  const total = Math.min(DISHES.length, MENU_MAX);
+  const total = DISHES.length;
+  const page = app.menuPage;
+  const start = menuPage.startOf(page, total);
+  const onPage = menuPage.countOn(page, total);
   const anim = app.pickAnim;
   const p = anim && PICK_ANIM_MS > 0
     ? Math.min(1, (performance.now() - anim.t0) / PICK_ANIM_MS) : -1;  // -1 = 静态高亮
   const e = p < 0 ? 0 : easeInOut(p);
+  // 动画里的下标是全局下标，画的时候要换算成本页第几行（跨页选中时也能正确放大）
+  const animRow = anim ? menuPage.localOf(anim.index, page, total) : -1;
 
-  for (let i = 0; i < MENU_MAX; i++) {
-    if (!view.menuRows[i]) continue;
-    if (i >= total) { setText(view.menuRows[i], shown, "row" + i, ""); continue; }
-    const pos = rowPos(i);
-    // ★ v83：序号补成两位（" 1" / "10"），菜名起点对齐 —— 一眼扫下去是整齐的两列，
-    //   而不是"1." "10." 长短不一。用空格补，不引入全角字符（mono 字体认不全）。
-    const title = String(i + 1).padStart(2, " ") + "  " + DISHES[i].title;
+  for (let r = 0; r < MENU_MAX; r++) {
+    if (!view.menuRows[r]) continue;
+    if (r >= onPage) { setText(view.menuRows[r], shown, "row" + r, ""); continue; }
+    const i = start + r;                       // 全局下标：这一行画的是第几道菜
+    const dish = DISHES[i];
+    const pos = rowPos(r);
+    // ★ v83：序号补成两位（" 1" / "10"），菜名起点对齐 —— 一眼扫下去是整齐的两列。
+    // ★ v58e：序号是**本页**的号（第 2 页第一道也印 1），说「1」就选它。
+    let title = String(r + 1).padStart(2, " ") + "  " + dish.title;
+    // 现场生成、还没说「加进去」的菜标一下，别让人以为它已经在菜单里了
+    if (dish.temp && !dish.saved) title += "（新）";
 
     if (p < 0) {
       // 忌口筛选：说了「不吃辣」→ 辣的菜变暗 + 标记（编号不变，方便照着说）
-      const spicy = app.noSpicy && SPICY_TITLES.indexOf(DISHES[i].title) >= 0;
-      styleRow(i, {
+      const spicy = app.noSpicy && SPICY_TITLES.indexOf(dish.title) >= 0;
+      styleRow(r, {
         x: MENU_COLS[pos.col].x, y: pos.y, w: MENU_COLS[pos.col].width,
         h: Math.round(ROW_BOX_H * FONT_SCALE), size: fs(ROW_FONT),
         rgb: spicy ? [0, 110, 50] : (i === app.menuSelected ? ROW_HOT_RGB : ROW_RGB),
         text: spicy ? title + "（辣）" : title
       });
-    } else if (i === anim.index) {
+    } else if (r === animRow) {
       // 选中的那道：字号 19→31、颜色提到近白、缓缓挪到中央（宽度放宽，避免放大后被裁）
       const size = fs(Math.round(ROW_FONT + 12 * e));
-      styleRow(i, {
+      styleRow(r, {
         x: MENU_COLS[pos.col].x,
         y: Math.round(pos.y + (PICK_CY - pos.y) * e),
         w: 640 - MENU_COLS[pos.col].x, h: size + 14, size: size,
@@ -682,7 +700,7 @@ function paintMenuRows() {
     } else {
       // 其余：颜色按指数变暗 → 变黑即"消失"，位置不动，视觉上像沉下去
       const fade = Math.max(0, 1 - e * 1.55);
-      styleRow(i, {
+      styleRow(r, {
         x: MENU_COLS[pos.col].x, y: pos.y, w: MENU_COLS[pos.col].width,
         h: Math.round(ROW_BOX_H * FONT_SCALE), size: fs(ROW_FONT),
         rgb: mixRgb([0, 0, 0], ROW_RGB, fade), text: fade < 0.06 ? "" : title
@@ -900,6 +918,23 @@ function paintWrap() {
   app.paintStage = "wrap:done";
 }
 
+/** 撤掉「现场生成、但用户说算了」的那道菜。
+ *  ★ v58e 修的就是这里：以前收尾说「算了」只是不写磁盘，内存里的 DISHES 还留着它，
+ *    回到菜单照样看得见、还能选中 —— 用户的原话是「说算了也还是保留」。
+ *    现在说了不存就立刻摘掉；真收藏过的（saved / 在 store 里）绝不误删。 */
+function dropTempDish(dish) {
+  const d = dish;
+  if (!d || d.saved || store.has(d.title)) return false;
+  const i = DISHES.indexOf(d);
+  if (i < 0) return false;
+  DISHES.splice(i, 1);
+  if (app.llmDish === d) { app.llmDish = null; app.llmDishIndex = -1; }
+  if (app.menuSelected >= DISHES.length) app.menuSelected = -1;
+  app.menuPage = menuPage.clamp(app.menuPage, DISHES.length);
+  dlog("COOK_TEMP drop " + JSON.stringify(d.title) + " left=" + DISHES.length);
+  return true;
+}
+
 /** 收尾阶段听懂一句话：按 src/wrap.js 的判定执行 */
 function handleWrapUtterance(text) {
   const w = app.wrap;
@@ -913,6 +948,7 @@ function handleWrapUtterance(text) {
       const r = store.add(w.dish);
       if (r.ok) {
         w.dish.saved = true;
+        w.dish.temp = false;      // 已经是正式菜谱了，不再是「（新）」
         w.saved = true;
         if (MENU_VOCAB.indexOf(w.dish.title) < 0) MENU_VOCAB.unshift(w.dish.title);
         dlog("COOK_WRAP saved " + JSON.stringify(w.dish.title) + " total=" + r.total);
@@ -926,8 +962,12 @@ function handleWrapUtterance(text) {
       return;
     }
     if (d.act === "skip" || d.act === "skipMenu") {
-      dlog("COOK_WRAP skip");
+      // ★ v58e：说了「算了 / 不用」就把这道菜从菜单里撤掉（只是不落盘不够，
+      //   内存里留着它照样能被选中，用户看到的就是"说了不存却还在"）
+      const dropped = dropTempDish(w.dish);
+      dlog("COOK_WRAP skip dropped=" + dropped);
       if (d.act === "skipMenu") { enterMenu("好，不存了 · 回菜单再选"); return; }
+      notify(dropped ? "好，不存了 · 这道已经撤出菜单" : "好，这次不存", [255, 200, 0], 2200);
       w.stage = "askNext";
       paintSession();
       return;
@@ -952,10 +992,21 @@ function handleMenuUtterance(text) {
   const t = String(text).trim();
   noteHeard(t);                       // 先把「听到的话」记下来，界面立刻有反馈
   const total = DISHES.length;
-  const shownMax = Math.min(total, MENU_MAX);
-  // 翻页模式已取消：真说了「下一页」也别当死机，明确告诉用户怎么选
+  const pages = menuPage.pageCount(total);
+  // ★ v58e：真的翻页。以前这里只会回一句「不用翻页」，可菜多了（收藏 + 生成）
+  //   一页根本摆不下，第 13 道起就没入口 —— 现在按页翻，编号按本页算。
   if (matchWord(t, NEXT_PAGE_WORDS) || matchWord(t, PREV_PAGE_WORDS)) {
-    notify("不用翻页 · " + total + " 道菜都在这一页，请说对应编号 1-" + shownMax, [255, 180, 0], 3600);
+    if (pages <= 1) {
+      notify("只有这一页 · " + total + " 道菜都在这里", [255, 180, 0], 2600);
+      return;
+    }
+    const back = matchWord(t, PREV_PAGE_WORDS);
+    app.menuPage = menuPage.clamp(app.menuPage + (back ? -1 : 1), total);
+    app.menuSelected = -1;
+    paintMenu();
+    const onPage = menuPage.countOn(app.menuPage, total);
+    notify("第 " + (app.menuPage + 1) + "/" + pages + " 页 · 编号 1-" + onPage,
+      [0, 220, 120], 2600);
     return;
   }
   if (matchWord(t, RECOMMEND_WORDS)) {
@@ -970,9 +1021,11 @@ function handleMenuUtterance(text) {
       }
       if (best < 0) best = 0;
     }
-    app.menuSelected = best;      // 点亮推荐那道（列表就在眼前，不用翻）
+    app.menuSelected = best;      // 点亮推荐那道
+    app.menuPage = menuPage.pageOf(best, total);   // ★ v58e：推荐的可能在别的页，先翻过去
     paintMenu();
-    notify("推荐 " + DISHES[best].title + " · 编号 " + (best + 1) + " · 请说对应编号", [0, 220, 120], 5200);
+    const localNo = best - menuPage.startOf(app.menuPage, total) + 1;   // 页内号
+    notify("推荐 " + DISHES[best].title + " · 本页 " + localNo + " 号 · 请说编号或菜名", [0, 220, 120], 5200);
     return;
   }
   // 忌口筛选：「不吃辣」→ 辣的菜变暗标「辣」，推荐避开辣的；编号不变，照说就行
@@ -988,7 +1041,11 @@ function handleMenuUtterance(text) {
     notify("好，全部菜都显示", [0, 220, 120], 3000);
     return;
   }
-  const pick = matchDish(t);
+  const pick = matchDish(
+    t,
+    menuPage.countOn(app.menuPage, total),        // 本页有几道 → 编号最多到它
+    menuPage.startOf(app.menuPage, total)         // 本页第一道的全局下标
+  );
   if (pick >= 0) {
     // 走的是同音容错（识别字错了），要明确显示「听成 X → 当成 Y」，
     // 否则用户会以为机器在乱猜；显示出来他才知道是识别的问题、不是选错菜。
@@ -1034,7 +1091,8 @@ function handleMenuUtterance(text) {
     });
     return;
   }
-  notify("听到「" + t + "」· 没对上，请说对应编号 1-" + shownMax, [255, 150, 0], 3200);
+  notify("听到「" + t + "」· 没对上，请说本页编号 1-"
+    + menuPage.countOn(app.menuPage, total), [255, 150, 0], 3200);
 }
 
 // ---- 大模型现场生成菜谱（可选能力）----
@@ -1092,20 +1150,23 @@ function onLlmDish(text, result) {
     app.llmFailReason = reason;
     dlog("COOK_LLM fail " + reason + " text=" + text);
     if (app.mode === "menu") {
-      const shownMax = Math.min(DISHES.length, MENU_MAX);
-      notify("没生成出来（" + llmReasonText(reason) + "）· 请说编号 1-" + shownMax, [255, 150, 0], 4200);
+      notify("没生成出来（" + llmReasonText(reason) + "）· 请说本页编号 1-"
+        + menuPage.countOn(app.menuPage, DISHES.length), [255, 150, 0], 4200);
     }
     return;
   }
   const dish = result.dish;
-  let idx;
-  // ★ 已经收藏过的菜不占"临时槽"：下一道生成的菜不许把它顶掉
-  //   （收藏的菜已经写进 custom-dishes.json，下次启动还在；但这次也不能瞬间消失）
-  if (app.llmDishIndex >= 0 && DISHES[app.llmDishIndex] === app.llmDish && !DISHES[app.llmDishIndex].saved) {
-    DISHES[app.llmDishIndex] = dish;          // 再生成一道就替换，菜单固定 12 行不被撑爆
-    idx = app.llmDishIndex;
-  } else if (DISHES.length >= MENU_MAX) {
-    idx = MENU_MAX - 1;
+  // ★ v58e：生成出来的菜一律「追加」，绝不顶掉别人。
+  //   以前菜单满了就把它塞到第 12 格，把内置菜（糖醋排骨）挤没了 ——
+  //   用户实测就是这个症状。现在菜单有翻页兜底，多一道就多一行。
+  dish.temp = true;      // 标记：还没说「加进去」，说「算了」就撤掉
+  dish.saved = false;
+  let idx = -1;
+  if (app.llmDish && !app.llmDish.saved) {
+    // 上一次生成的还没存 → 直接换掉它，别让临时菜越攒越多
+    idx = DISHES.indexOf(app.llmDish);
+  }
+  if (idx >= 0) {
     DISHES[idx] = dish;
   } else {
     DISHES.push(dish);
@@ -1336,8 +1397,11 @@ function footerHint() {
   if (!asr.remoteReady) return "识别服务未连接 · 文字框打数字 1-9 也能操作";
 
   if (app.mode === "menu") {
-    // 不再翻页：菜都在一页里，所以提示只讲「怎么说序号/菜名」
-    return "请说对应编号 1-" + Math.min(DISHES.length, MENU_MAX) + " · 也可以说菜名";
+    // ★ v58e：多页时提示可以翻页，并说清编号是「本页」的号
+    const pages = menuPage.pageCount(DISHES.length);
+    const onPage = menuPage.countOn(app.menuPage, DISHES.length);
+    if (pages > 1) return "本页编号 1-" + onPage + " · 说「下一页」翻页 · 也可以说菜名";
+    return "请说对应编号 1-" + onPage + " · 也可以说菜名";
   }
 
   // ★ 收尾页：说话内容就是这两个问题的答案，底栏直接给说法

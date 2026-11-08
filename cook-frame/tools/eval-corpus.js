@@ -13,7 +13,20 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { parseUtterance, createSession } = require("../src/engine");
 const { DISHES } = require("../src/recipe");
-const menu = require("../src/menu");
+
+// 只认「整句就是在报编号」的短句（"3" / "第三道" / "我要 3"）。
+// 以前这里借 menu.pickByNumber，可那套是按「4 道一页」算的，只认 1-4，
+// 评估时 5 往后的编号全被判错。现在直接对整个菜单取号。
+const CN_NUM = { "一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10 };
+function pickByNumber(text) {
+  const t = String(text || "");
+  if (t.length > 12) return -1;          // 太长多半是在说话，不是在报数
+  for (const ch of t) {
+    const n = /[0-9]/.test(ch) ? Number(ch) : CN_NUM[ch];
+    if (n && n >= 1 && n <= DISHES.length) return n - 1;
+  }
+  return -1;
+}
 
 const corpusDir = process.argv[2] || ".";
 const files = [
@@ -59,7 +72,7 @@ function matchDish(text) {
       if (at >= 0 && !dishNegated(t, at)) return i;
     }
   }
-  return menu.pickByNumber(t, 0, DISHES.length);
+  return pickByNumber(t);
 }
 
 const session = createSession(DISHES[0]);

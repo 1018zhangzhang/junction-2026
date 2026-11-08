@@ -11,7 +11,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const FILE = "custom-dishes.json";
-const MAX_SAVED = 6;          // 最多留 6 道（菜单一页 12 行，再多会把内置菜挤出去）
+// ★ v58e：6 → 12。菜单重新支持翻页，收藏的菜不再挤掉内置菜，所以放宽一档；
+//   12 道大约占满一整页，再多也还有第 2 页接得住（内置 11 道 + 收藏 12 道 = 2 页）。
+const MAX_SAVED = 12;
 
 let cache = null;             // 读一次就记住，避免每帧都碰磁盘
 

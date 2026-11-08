@@ -295,7 +295,13 @@ if (process.env.COOK_MOCK_LLM === "1") {
         // 带 response_format = 要 JSON 菜谱；不带 = 灶台边随口问答，只回一句话
         let isJson = false;
         try { isJson = Boolean(JSON.parse(body).response_format); } catch (e) { /* 忽略 */ }
-        const content = isJson ? JSON.stringify(dish) : "先关小火，把锅端离灶台十几秒";
+        // 请求里点了别的菜名时，返回同名菜谱（用来测"连续生成两道临时菜"）
+        let payload = dish;
+        if (isJson) {
+          const m = body.match(/番茄牛腩/);
+          if (m) payload = Object.assign({}, dish, { title: "番茄牛腩" });
+        }
+        const content = isJson ? JSON.stringify(payload) : "先关小火，把锅端离灶台十几秒";
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ choices: [{ message: { content } }] }));
       });
@@ -356,6 +362,7 @@ if (process.env.COOK_MOCK_LLM === "1") {
     console.log("\n[通过] 不认识的菜 → 联网生成 → 自动开做；没配置则零请求。");
     await dialogTest(true);          // 顺手在同一份状态下验对话行（复用这个假服务）
     await wrapTest(true);            // 再做完了 → 库外菜应问「要不要存进菜单」
+    await noSaveTest();              // ★ 说了「算了」必须真的撤掉，且不顶掉别的菜
     server.close();
   })().catch((e) => { console.log("\n[崩溃·大模型链路] " + e.stack); process.exit(1); });
 }
@@ -544,12 +551,14 @@ async function wrapTest(expectSave) {
 
   if (expectSave) {
     const t1 = globalThis.__logs.length;
-    voiceStub.onText("要");
+    // ★ v58e：第一问只认「明确要存」。「要」这类含糊词现在只回问一次，
+    //   所以这里说「加进去」；含糊词的行为在 test-wrap.js 里单独测。
+    voiceStub.onText("加进去");
     frames(70);
     const savedLog = globalThis.__logs.slice(t1).find((l) => l.indexOf("COOK_WRAP saved") >= 0);
-    if (!savedLog) fail("说「要」没有把菜存进菜单（COOK_WRAP saved 没出现）");
+    if (!savedLog) fail("说「加进去」没有把菜存进菜单（COOK_WRAP saved 没出现）");
     const file = path.join(tmp, "custom-dishes.json");
-    if (!fs.existsSync(file)) fail("说「要」之后没有生成 " + file);
+    if (!fs.existsSync(file)) fail("说「加进去」之后没有生成 " + file);
     let saved = null;
     try { saved = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { fail("收藏文件不是合法 JSON"); }
     if (!saved || !Array.isArray(saved.dishes) || !saved.dishes.length) fail("收藏文件里没有菜");
@@ -582,7 +591,143 @@ async function wrapTest(expectSave) {
   const p4 = lastPaint(t3);
   if (p4.indexOf("mode=menu") < 0) fail("说「再做一道」没有回到菜单：" + p4);
   console.log("  ok   回菜单：" + JSON.stringify(pfield(p4, "main")));
-  console.log("\n[通过] 收尾问答：是否收藏 / 收工总页 / 再回菜单，全部走通。");
+
+  // ★ v58e：菜多到超过一页时，说「下一页 / 上一页」必须真的翻
+  const pagesNow = (globalThis.__logs.filter((l) => l.indexOf("COOK_MENU ") >= 0).slice(-1)[0] || "");
+  if (pagesNow.indexOf("/") >= 0 && !/page=1\/1 /.test(pagesNow)) {
+    const t4 = globalThis.__logs.length;
+    voiceStub.onText("下一页");
+    frames(20);
+    const p5 = globalThis.__logs.slice(t4).filter((l) => l.indexOf("COOK_MENU ") >= 0).slice(-1)[0] || "";
+    if (p5.indexOf("page=2/") < 0) fail("说「下一页」没翻页：" + (p5 || "(没有页码日志)"));
+    const t5 = globalThis.__logs.length;
+    voiceStub.onText("上一页");
+    frames(20);
+    const p6 = globalThis.__logs.slice(t5).filter((l) => l.indexOf("COOK_MENU ") >= 0).slice(-1)[0] || "";
+    if (p6.indexOf("page=1/") < 0) fail("说「上一页」没翻回去：" + (p6 || "(没有页码日志)"));
+    console.log("  ok   翻页：" + p5.replace("[cooklog] ", "") + " → " + p6.replace("[cooklog] ", ""));
+  }
+  console.log("\n[通过] 收尾问答：是否收藏 / 收工总页 / 再回菜单 / 翻页，全部走通。");
+}
+
+/* ─────────── 说了「算了」必须真的撤掉（v58e 修的两个 bug）───────────
+   用户实测两件事：
+     ① 收尾说「算了 / 不用」，菜还是留在菜单里，下次还能选中；
+     ② 菜单满了 12 道，新生成的菜把内置菜（糖醋排骨）挤没了。
+   这组用例就盯这两条：
+     · 生成后 DISHES 必须变成 n+1（追加在末尾，index=n），不是替换掉第 12 格；
+     · 说「算了」之后必须回到 n，并且收藏文件里不能多出这道菜。 */
+async function noSaveTest() {
+  const fail = (msg) => { console.log("[失败] " + msg); process.exit(1); };
+  const voiceStub = require(path.join(tmp, "voice.js"));
+  console.log("\n== 说「算了」→ 不能留在菜单；生成不能顶掉别的菜 ==");
+
+  const menus = () => globalThis.__logs.filter((l) => l.indexOf("COOK_MENU ") >= 0);
+  const beforeLog = menus().slice(-1)[0] || "";
+  const m0 = beforeLog.match(/n=(\d+)/);
+  if (!m0) fail("菜单没打过 COOK_MENU 日志，测不了菜数：" + beforeLog);
+  const n0 = Number(m0[1]);
+
+  // ① 生成一道新菜：必须"追加"（index=n0），不能顶掉任何一道
+  const t0 = globalThis.__logs.length;
+  voiceStub.onText("我想吃番茄牛腩");
+  let okLog = null;
+  for (let i = 0; i < 40; i++) {
+    frames(3);
+    okLog = globalThis.__logs.slice(t0).find((l) => l.indexOf("COOK_LLM ok") >= 0);
+    if (okLog) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  if (!okLog) fail("第二道菜没生成出来（COOK_LLM ok 没出现）");
+  const idx = Number((okLog.match(/index=(\d+)/) || [0, -1])[1]);
+  if (idx !== n0) {
+    fail("生成的菜没追加到末尾（index=" + idx + "，菜单原本 " + n0 + " 道）—— 又去顶别人的位置了");
+  }
+  const afterGen = menus().slice(-1)[0] || "";
+  const n1 = Number((afterGen.match(/n=(\d+)/) || [0, -1])[1]);
+  if (n1 !== n0 + 1) fail("生成后菜数没变成 " + (n0 + 1) + "，实际 n=" + n1 + " —— 有菜被挤掉了");
+  console.log("  ok   " + okLog.replace("[cooklog] ", "") + "（追加到末尾，没顶人）");
+  console.log("  ok   " + afterGen.replace("[cooklog] ", ""));
+
+  // ★ 等选菜动画走完（0.9 秒）再说话，否则「完成了」会落在菜单页被丢掉
+  for (let i = 0; i < 40; i++) {
+    frames(3);
+    if (globalThis.__logs.slice(t0).some((l) => l.indexOf("COOK_PAINT mode=cooking") >= 0)) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  // ② 现在有 13 道菜（2 页）：回菜单，用「上一页 / 下一页」验真翻页
+  voiceStub.onText("换菜");
+  frames(20);
+  const menusAfter = () => (globalThis.__logs.filter((l) => l.indexOf("COOK_MENU ") >= 0).slice(-1)[0] || "");
+  if (menusAfter().indexOf("page=2/2") < 0) fail("13 道菜应该停在第 2 页：" + menusAfter());
+  const tp = globalThis.__logs.length;
+  voiceStub.onText("上一页");
+  frames(20);
+  const prevLog = menusAfter();
+  if (prevLog.indexOf("page=1/2") < 0) fail("说「上一页」没翻回第 1 页：" + prevLog);
+  const tp2 = globalThis.__logs.length;
+  voiceStub.onText("下一页");
+  frames(20);
+  const nextLog = menusAfter();
+  if (nextLog.indexOf("page=2/2") < 0) fail("说「下一页」没翻到第 2 页：" + nextLog);
+  console.log("  ok   翻页：" + prevLog.replace("[cooklog] ", "") + " → " + nextLog.replace("[cooklog] ", ""));
+
+  // ③ 在第 2 页按菜名把这道临时菜选回来（跨页选菜）
+  const tsel = globalThis.__logs.length;
+  voiceStub.onText("番茄牛腩");
+  for (let i = 0; i < 40; i++) {
+    frames(3);
+    if (globalThis.__logs.slice(tsel).some((l) => l.indexOf("COOK_PAINT mode=cooking") >= 0)) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  const pickLog = globalThis.__logs.slice(tsel).find((l) => l.indexOf("COOK_PICK begin") >= 0);
+  if (!pickLog || pickLog.indexOf("idx=12") < 0) fail("跨页按菜名没选中第 13 道：" + (pickLog || "(没进动画)"));
+
+  // ④ 做完 → 问要不要存 → 说「算了」→ 必须撤出菜单
+  const t1 = globalThis.__logs.length;
+  voiceStub.onText("完成了");
+  frames(70);
+  const startLog = globalThis.__logs.slice(t1).find((l) => l.indexOf("COOK_WRAP start") >= 0);
+  if (!startLog || startLog.indexOf("canSave=true") < 0) {
+    fail("库外菜没问「要不要存进菜单」：" + (startLog || "(没进收尾)"));
+  }
+  const t2 = globalThis.__logs.length;
+  voiceStub.onText("算了");
+  frames(70);
+  const seg = globalThis.__logs.slice(t2);
+  const dropLog = seg.find((l) => l.indexOf("COOK_TEMP drop") >= 0);
+  const skipLog = seg.find((l) => l.indexOf("COOK_WRAP skip") >= 0);
+  if (!skipLog) fail("说「算了」没进「不存」分支");
+  if (skipLog.indexOf("dropped=true") < 0) {
+    fail("说「算了」只是没落盘，菜还留在菜单里：" + skipLog.replace("[cooklog] ", ""));
+  }
+  if (!dropLog) fail("没有 COOK_TEMP drop 日志（菜没被摘掉）");
+  console.log("  ok   " + skipLog.replace("[cooklog] ", ""));
+  console.log("  ok   " + dropLog.replace("[cooklog] ", ""));
+
+  // ⑤ 回菜单：菜数必须回到原来的 n0
+  voiceStub.onText("不用");
+  frames(70);
+  const t3 = globalThis.__logs.length;
+  voiceStub.onText("再做一道");
+  frames(70);
+  const backLog = menus().slice(-1)[0] || "";
+  const n2 = Number((backLog.match(/n=(\d+)/) || [0, -1])[1]);
+  if (n2 !== n0) fail("说「算了」之后菜单菜数应该是 " + n0 + "，实际 n=" + n2);
+  console.log("  ok   " + backLog.replace("[cooklog] ", "") + "（回到原来的 " + n0 + " 道）");
+
+  // ⑥ 收藏文件里不能多出这道菜
+  const file = path.join(tmp, "custom-dishes.json");
+  if (fs.existsSync(file)) {
+    let saved = null;
+    try { saved = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { fail("收藏文件坏了"); }
+    const titles = (saved.dishes || []).map((d) => d.title);
+    if (titles.indexOf("番茄牛腩") >= 0) fail("说了「算了」却把番茄牛腩写进了 custom-dishes.json");
+    console.log("  ok   收藏文件里没有「番茄牛腩」：" + JSON.stringify(titles));
+  }
+
+  console.log("\n[通过] 说「算了」→ 菜真的撤出菜单，且生成时没有顶掉任何一道。");
 }
 
 if (process.env.COOK_MOCK_LLM !== "1") {

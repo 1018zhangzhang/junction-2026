@@ -3,7 +3,7 @@
 > 对着眼镜说一句「番茄炒蛋」，接下来每一步都有人在你耳边告诉你该干什么。
 > 手上有油、眼睛离不开锅的时候，菜谱不用翻页，语音就能翻。
 
-**版本**：v58c &nbsp;|&nbsp; **平台**：IrisView 智能眼镜（640×480 单片显示）&nbsp;|&nbsp; **识别**：本机 Vosk 流式，断网可用
+**版本**：v58e（versionCode 87） &nbsp;|&nbsp; **平台**：IrisView 智能眼镜（640×480 单片显示）&nbsp;|&nbsp; **识别**：本机 Vosk 流式，断网可用
 
 > 更细的设计说明、演示脚本和验收清单见 [`cook-frame/README.md`](cook-frame/README.md) 与 [`cook-frame/docs/`](cook-frame/docs)。
 
@@ -55,7 +55,7 @@ cook-frame/src/engine.js                  只负责「文字 → 意图」
 ## 目录结构
 
 ```
-cook-frame/            主应用（当前 v58c）
+cook-frame/            主应用（当前 v58e）
 ├── src/index.js       界面、菜单、口令分发、布局切换
 ├── src/engine.js      ★ 语义理解核心：翻页 / 救场 / 改量 / 提问
 ├── src/agent.js       多轮对话：生成新菜、确认流程、收尾结算
@@ -63,11 +63,13 @@ cook-frame/            主应用（当前 v58c）
 ├── src/asr.js         识别调度：本机流式 + 可选云端整句精识别
 ├── src/asr-volc-ws.js 火山引擎 WebSocket 流式识别（可选通道）
 ├── src/dish-store.js  自定义菜单与忌口记忆（本机持久化）
+├── src/menu-page.js   菜单分页：菜多了自动翻页，不刷屏
 ├── src/recipe.js      11 道菜的菜谱数据
 ├── web/               浏览器预览页
 ├── docs/              验收清单 / 演示脚本 / 延迟测量
-└── tools/             18 个脚本
+└── tools/             16 个脚本
     ├── test-engine.js     58 条核心口令回归测试
+    ├── test-menu-page.js  菜单分页测试（25 项）
     ├── test-agent.js      对话流程测试
     └── check-secrets.js   提交前密钥扫描
 
@@ -148,7 +150,7 @@ irisview package . --output ../cook-frame.fuiapp --debug-unsigned
 irisview run ../cook-frame.fuiapp --allow-debug-unsigned --display-mode mono
 ```
 
-界面左上角显示 **v58c** 表示运行的是当前版本。
+界面左上角显示 **v58e** 表示运行的是当前版本。
 
 ### 六、回归测试
 

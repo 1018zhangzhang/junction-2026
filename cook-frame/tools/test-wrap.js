@@ -38,10 +38,16 @@ function dish(title, steps) {
 /* ─────────── ① 收尾问答判定 ─────────── */
 // 问题①：要不要加进菜单
 t("加进去 → 保存", flow.decide("askSave", "加进去").act === "save");
-t("要 → 保存", flow.decide("askSave", "要").act === "save");
-t("好啊 → 保存", flow.decide("askSave", "好啊").act === "save");
 t("存起来 → 保存", flow.decide("askSave", "存起来吧").act === "save");
-t("嗯 → 保存", flow.decide("askSave", "嗯").act === "save");
+t("存 → 保存", flow.decide("askSave", "存").act === "save");
+t("留下 → 保存", flow.decide("askSave", "留下").act === "save");
+t("加吧 → 保存", flow.decide("askSave", "加吧").act === "save");
+// ★ v58e：第一问只认"明确要存"。「要 / 好啊 / 嗯」都可能是在回答别的
+//   （ASR 也常把「算了」听成「好了」），一律回问一次，不直接落盘。
+t("要 → 只回问，不存", flow.decide("askSave", "要").act === "retry");
+t("好啊 → 只回问，不存", flow.decide("askSave", "好啊").act === "retry");
+t("好了（算了被听错）→ 只回问，不存", flow.decide("askSave", "好了").act === "retry");
+t("嗯 → 只回问，不存", flow.decide("askSave", "嗯").act === "retry");
 t("算了 → 不存", flow.decide("askSave", "算了").act === "skip");
 t("不用 → 不存", flow.decide("askSave", "不用").act === "skip");
 // ★ 关键：否定优先。「不要加」里既有"不要"也有"加"，必须判成"不存"
@@ -103,14 +109,15 @@ t("没有步骤 → 拒绝", bad.ok === false && bad.reason === "bad-dish");
 t("拒绝后列表不变", store.list().length === 1);
 
 // 上限：最多 MAX_SAVED 条，新的排最前
-for (let i = 0; i < 9; i++) store.add(dish("测试菜" + i));
+const EXTRA = store.MAX_SAVED + 3;                 // 多存几道，确保最早那道被挤掉
+for (let i = 0; i < EXTRA; i++) store.add(dish("测试菜" + i));
 t("最多只留 " + store.MAX_SAVED + " 条", store.list().length === store.MAX_SAVED, "实际 " + store.list().length);
-t("最新的排第一", store.list()[0].title === "测试菜8");
+t("最新的排第一", store.list()[0].title === "测试菜" + (EXTRA - 1));
 t("最老的被丢掉", store.has("红烧茄子") === false);
 
 // 重启（清缓存后从磁盘读）还在
 store.reset();
-t("重启后仍然读得到", store.list().length === store.MAX_SAVED && store.has("测试菜8"));
+t("重启后仍然读得到", store.list().length === store.MAX_SAVED && store.has("测试菜" + (EXTRA - 1)));
 
 // 文件坏了不能把应用带崩
 fs.writeFileSync(path.join(dir, store.FILE), "{ 这不是 json", "utf8");
