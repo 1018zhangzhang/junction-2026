@@ -76,17 +76,43 @@ my-focus-break/        专注休息小应用（独立应用）
 
 ## 快速开始
 
-### 前置
+> **代码不能开箱即跑**：仓库只含源码。运行还需要平台工具链、语音模型和 Python 依赖，这三样都在仓库之外，下面逐项说明。
+
+### 一、环境要求
+
+| 依赖 | 版本 / 获取方式 | 是否随仓库提供 |
+|---|---|---|
+| WSL2 + Ubuntu | 应用必须跑在 **Linux 文件系统**（`~/...`），**不能放在 `/mnt/c`、`/mnt/d` 下直接运行** | 否 |
+| IrisView Developer Kit | v1.0.0（提供 `irisview` 命令） | 否 |
+| Node.js | **24.13.0**（`node -v` 必须完全一致） | 否 |
+| Python | 3.10 以上，需 `flask`、`vosk`（见 `asr-service/requirements.txt`） | 是 |
+| Vosk 中文模型 | `vosk-model-small-cn-0.22`，66 MB | **否** |
+
+### 二、下载语音模型（必做，否则识别服务起不来）
 
 ```bash
-irisview --version                       # IrisView 开发工具链
-python3 --version                        # 3.10+
-ls asr-service/vosk-model-small-cn-0.22  # 语音模型（66MB，未随仓库提交）
+cd asr-service
+# 从 alphacephei.com/vosk/models 下载 vosk-model-small-cn-0.22.zip
+unzip vosk-model-small-cn-0.22.zip -d .
+ls vosk-model-small-cn-0.22   # 确认目录存在
 ```
 
-模型不在的话，从 `alphacephei.com/vosk/models` 下载 `vosk-model-small-cn-0.22`，解压到 `asr-service/` 下。
+### 三、自检
 
-### 启动（两个终端）
+```bash
+irisview --version                       # 工具链装好了吗
+node -v                                  # 应为 v24.13.0
+python3 --version                        # 3.10+
+ls asr-service/vosk-model-small-cn-0.22  # 模型在不在
+```
+
+四项都正常再往下走。任何一项缺失，后面会出现「没有报错但就是不工作」的情况。
+
+### 四、可选配置（不配也能跑）
+
+`cook-frame` 默认走本机识别，**不需要配置**。若要用在线识别或大模型兜底，在 `cook-frame/` 下新建 `config.json`（参考 `kitchen-tips/config.example.json`）。该文件已被 `.gitignore` 排除，**密钥不会上传**。
+
+### 五、启动（两个终端）
 
 **终端 1 — 识别服务**
 
@@ -116,7 +142,7 @@ irisview run ../cook-frame.fuiapp --allow-debug-unsigned --display-mode mono
 
 界面左上角显示 **v35** 表示运行的是当前版本。
 
-### 回归测试
+### 六、回归测试
 
 改完 `engine.js` 或词表后必须跑，48 条核心口令全过才算好：
 
