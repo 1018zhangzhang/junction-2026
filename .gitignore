@@ -9,8 +9,14 @@ dist/
 # 大文件：语音模型（66MB，不进 git，见 README）
 vosk-model-*/
 
-# 含密钥的本地配置（只提交 config.example.json）
+# 含密钥的本地配置（只提交 *.example.json）
 config.json
+llm.json
+.env
+*.key
+
+# 用户本机数据（忌口/喜好，随应用数据目录走）
+taste.json
 
 # 旧版备份（git 本身就是版本管理，不需要文件夹备份）
 cook-frame-backup-v4/

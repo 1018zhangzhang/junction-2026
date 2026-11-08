@@ -1649,9 +1649,25 @@ try {
 }
 if (IMPORTED_DISHES.length) console.log("COOK_RECIPE imported=" + IMPORTED_DISHES.length);
 
-const DISHES = BUILTIN_DISHES.concat(
-  IMPORTED_DISHES.filter((d) => !BUILTIN_DISHES.some((b) => b.title === d.title))
-);
+/* ── 用户做完菜说「加进去」收藏的菜 ──────────────────────────────────────
+ * ★ 放在最前面：用户的原话是「下次就出现在第一页的菜谱里面」。
+ *   它们存在应用数据目录的 custom-dishes.json（包外，不会打进提交的 .fuapp）。
+ *   同名以内置为准，避免收藏了一道内置菜后菜单里出现两个一样的名字。 */
+let SAVED_DISHES = [];
+try {
+  SAVED_DISHES = require("./dish-store").load();
+} catch (error) {
+  SAVED_DISHES = [];
+}
+if (SAVED_DISHES.length) console.log("COOK_RECIPE saved=" + SAVED_DISHES.length);
+
+const DISHES = SAVED_DISHES
+  .filter((d) => !BUILTIN_DISHES.some((b) => b.title === d.title))
+  .concat(BUILTIN_DISHES)
+  .concat(IMPORTED_DISHES.filter((d) =>
+    !BUILTIN_DISHES.some((b) => b.title === d.title) &&
+    !SAVED_DISHES.some((s) => s.title === d.title)
+  ));
 
 // 汇总词表推给 ASR 服务（开识别流时限定识别范围 → 小模型准确率更高）
 // 以后加菜：新菜谱对象里写好 vocab，这里自动带上，不用改别处

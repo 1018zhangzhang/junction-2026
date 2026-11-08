@@ -3,7 +3,9 @@
 > 对着眼镜说一句「番茄炒蛋」，接下来每一步都有人在你耳边告诉你该干什么。
 > 手上有油、眼睛离不开锅的时候，菜谱不用翻页，语音就能翻。
 
-**版本**：v35 &nbsp;|&nbsp; **平台**：IrisView 智能眼镜（640×480 单片显示）&nbsp;|&nbsp; **识别**：纯本机 Vosk，断网可用
+**版本**：v58c &nbsp;|&nbsp; **平台**：IrisView 智能眼镜（640×480 单片显示）&nbsp;|&nbsp; **识别**：本机 Vosk 流式，断网可用
+
+> 更细的设计说明、演示脚本和验收清单见 [`cook-frame/README.md`](cook-frame/README.md) 与 [`cook-frame/docs/`](cook-frame/docs)。
 
 ---
 
@@ -53,15 +55,21 @@ cook-frame/src/engine.js                  只负责「文字 → 意图」
 ## 目录结构
 
 ```
-cook-frame/            主应用（当前 v35）
-├── src/index.js       界面、菜单、口令分发
+cook-frame/            主应用（当前 v58c）
+├── src/index.js       界面、菜单、口令分发、布局切换
 ├── src/engine.js      ★ 语义理解核心：翻页 / 救场 / 改量 / 提问
+├── src/agent.js       多轮对话：生成新菜、确认流程、收尾结算
 ├── src/voice.js       收音、静音判断、切句
-├── src/asr.js         与识别服务的 HTTP 接口
+├── src/asr.js         识别调度：本机流式 + 可选云端整句精识别
+├── src/asr-volc-ws.js 火山引擎 WebSocket 流式识别（可选通道）
+├── src/dish-store.js  自定义菜单与忌口记忆（本机持久化）
 ├── src/recipe.js      11 道菜的菜谱数据
-└── tools/
-    ├── test-engine.js     48 条核心口令回归测试
-    └── eval-corpus.js     189 条真实语料评测（当前准确率 95.8%）
+├── web/               浏览器预览页
+├── docs/              验收清单 / 演示脚本 / 延迟测量
+└── tools/             18 个脚本
+    ├── test-engine.js     58 条核心口令回归测试
+    ├── test-agent.js      对话流程测试
+    └── check-secrets.js   提交前密钥扫描
 
 asr-service/           本机语音识别服务
 ├── asr_server.py      Flask 服务，端口 5001
@@ -140,15 +148,16 @@ irisview package . --output ../cook-frame.fuiapp --debug-unsigned
 irisview run ../cook-frame.fuiapp --allow-debug-unsigned --display-mode mono
 ```
 
-界面左上角显示 **v35** 表示运行的是当前版本。
+界面左上角显示 **v58c** 表示运行的是当前版本。
 
 ### 六、回归测试
 
-改完 `engine.js` 或词表后必须跑，48 条核心口令全过才算好：
+改完 `engine.js` 或词表后必须跑，58 条核心口令全过才算好：
 
 ```bash
 cd cook-frame
 node tools/test-engine.js
+# 期望输出：✓ 全部通过 58/58
 ```
 
 ---
@@ -157,10 +166,13 @@ node tools/test-engine.js
 
 | 项目 | 结果 |
 |---|---|
-| 核心口令回归 | 48 / 48 通过 |
-| 真实语料评测 | 189 条，准确率 **95.8%** |
-| 菜谱覆盖 | 11 道菜 |
-| 识别链路 | 本机离线，不依赖网络 |
+| 核心口令回归 | **58 / 58 通过** |
+| 对话流程测试 | `node tools/test-agent.js` |
+| 菜谱覆盖 | 内置 11 道菜，可再记 6 道自定义 |
+| 识别链路 | 本机 Vosk 流式，断网可用 |
+| 密钥扫描 | `node tools/check-secrets.js` 通过 |
+
+语料级评测脚本在 `cook-frame/tools/eval-corpus.js`，需要自备 `corpus.jsonl`（语料未随仓库提交）。
 
 ---
 

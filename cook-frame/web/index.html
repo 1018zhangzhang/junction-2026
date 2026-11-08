@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>做饭助手 · 网页版</title>
+<style>
+  :root{
+    --stage-w: 640px;
+    --stage-h: 480px;
+  }
+  *{ box-sizing: border-box; }
+  html, body{ height: 100%; margin: 0; }
+  body{
+    background:
+      radial-gradient(1200px 700px at 50% -10%, #0f1a14 0%, #070a09 55%, #050706 100%);
+    color: #7fb894;
+    font-family: "Sarasa Mono SC", "Noto Sans Mono CJK SC", "Consolas", "Menlo",
+                 "PingFang SC", "Microsoft YaHei", monospace;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; padding: 16px 16px 22px; overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── 顶部小标题（页面装饰，不属于眼镜画面）── */
+  .bar{
+    width: 100%; max-width: 1080px;
+    display: flex; align-items: baseline; justify-content: space-between;
+    font-size: 12px; letter-spacing: .08em; color: #4d7d5f;
+  }
+  .bar b{ color: #8fd8a6; font-weight: 600; letter-spacing: .16em; }
+  .bar span{ color: #3e6750; }
+
+  /* ── 画面框（眼镜里就是这一块 640×480 的纯黑）── */
+  #frame{
+    position: relative;
+    width: 640px; height: 480px;
+    border-radius: 10px;
+    background: #000;
+    box-shadow:
+      0 0 0 1px rgba(0, 255, 130, .14),
+      0 0 0 6px rgba(0, 0, 0, .55),
+      0 24px 70px rgba(0, 0, 0, .75),
+      0 0 90px rgba(0, 255, 130, .05) inset;
+    overflow: hidden;
+  }
+  #frame::after{              /* 极淡的玻璃反光，只为看着像块屏，不挡字 */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(160deg, rgba(255,255,255,.035), transparent 42%);
+  }
+  #stage{
+    position: absolute; top: 0; left: 0;
+    width: 640px; height: 480px;
+    transform-origin: top left;
+    background: #000;
+  }
+
+  /* ── 画面上的一行字（对应一个 ui.Text）── */
+  .t{
+    position: absolute;
+    display: flex; align-items: center;
+    white-space: pre;
+    line-height: 1.22;
+    will-change: left, top, width, height, font-size, color;
+  }
+  .t.wrap{ white-space: pre-wrap; word-break: break-word; }
+  .t.row{ cursor: pointer; }
+
+  /* ── 底部操作区（页面装饰）── */
+  .panel{
+    width: 100%; max-width: 1080px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+  }
+  .row1{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  input[type=text]{
+    width: 320px; padding: 9px 12px;
+    background: rgba(0, 30, 16, .55);
+    border: 1px solid rgba(0, 255, 130, .22);
+    border-radius: 8px; color: #b6f0c8; font: inherit; font-size: 13px; outline: none;
+  }
+  input[type=text]:focus{ border-color: rgba(0, 255, 130, .55); box-shadow: 0 0 0 3px rgba(0,255,130,.08); }
+  input::placeholder{ color: #3f6a51; }
+  button{
+    font: inherit; font-size: 12px; letter-spacing: .06em;
+    padding: 8px 12px; border-radius: 8px; cursor: pointer;
+    color: #9fe0b6; background: rgba(0, 40, 22, .5);
+    border: 1px solid rgba(0, 255, 130, .2);
+    transition: background .15s, border-color .15s, color .15s, transform .1s;
+  }
+  button:hover{ background: rgba(0, 70, 38, .6); border-color: rgba(0,255,130,.45); color: #d8ffe6; }
+  button:active{ transform: translateY(1px); }
+  button.on{ background: rgba(0, 120, 60, .35); border-color: rgba(0, 255, 130, .7); color: #e6fff0; }
+  .chips{ display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 860px; }
+  .chip{
+    font-size: 11.5px; padding: 5px 10px; border-radius: 999px;
+    color: #7ec99a; background: rgba(0, 26, 14, .7);
+    border: 1px solid rgba(0, 255, 130, .16); cursor: pointer;
+  }
+  .chip:hover{ border-color: rgba(0,255,130,.45); color: #d2ffe2; }
+  .tip{ font-size: 11px; color: #3c6349; letter-spacing: .04em; }
+  @media (max-width: 720px){
+    .bar{ display: none; }
+    input[type=text]{ width: 190px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <b>做饭助手 · 网页版</b>
+  <span>640 × 480 逻辑像素 · 与眼镜端同一套坐标 / 字号 / 色值</span>
+</div>
+
+<div id="frame">
+  <div id="stage"></div>
+</div>
+
+<div class="panel">
+  <div class="row1">
+    <input id="say" type="text" autocomplete="off" spellcheck="false" placeholder="打字代替说话：1 / 番茄炒蛋 / 下一步 …">
+    <button id="send">说这句</button>
+    <button id="mic">🎤 开始听</button>
+    <button id="reset">重新开始</button>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="tip" id="tip">点菜名也能选 · ↑↓ 选择、回车确定 · 空格 = 下一步</div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+ * 菜谱眼镜 · 网页版
+ * ----------------------------------------------------------------------------
+ * 这一版不是"重新设计"，是把眼镜端 src/index.js 的画面参数原样搬过来：
+ *   画面 640×480；顶栏 y=26/h=30/14 号；标题 y=120；副标题 y=330；
+ *   倒计时 y=64/h=34/20 号；识别行 y=92；麦克风行 y=404；底栏 y=448；
+ *   菜单两列 x=30 / x=330，各 280 宽（中心 170 / 470，关于 320 对称），
+ *   行距 34、行首 y=172、字号 20、行框 30；选中放大到 31 号并落到 y=208。
+ * 颜色也是同一个表：菜名 rgb(0,200,90)、点亮 rgb(0,255,120)、选中 rgb(255,255,235)。
+ * ========================================================================== */
+
+const DISHES = [
+ {
+  "t": "番茄炒蛋",
+  "s": "经典家常 · 3 人份",
+  "spicy": false,
+  "st": [
+   {
+    "a": "先把番茄切块备用",
+    "d": "切成小块，方便出汁",
+    "ms": 120000
+   },
+   {
+    "a": "打三个鸡蛋，加一小撮盐",
+    "d": "一小撮盐 · 打散到看不见蛋清",
+    "ms": 60000
+   },
+   {
+    "a": "热锅倒油，油热后倒蛋液",
+    "d": "中小火 · 油面开始晃动就是热了",
+    "ms": 90000
+   },
+   {
+    "a": "蛋液定型后翻炒，盛出备用",
+    "d": "边缘凝固就翻，别炒太老",
+    "ms": 90000
+   },
+   {
+    "a": "下番茄，炒到出汁",
+    "d": "中火 · 番茄变软、锅里有红色汤汁",
+    "ms": 120000
+   },
+   {
+    "a": "把蛋倒回去，翻炒均匀",
+    "d": "让蛋吸一点汤汁",
+    "ms": 60000
+   },
+   {
+    "a": "尝一下味道，再决定加不加盐",
+    "d": "小口尝 · 咸淡自己定",
+    "ms": 60000
+   },
+   {
+    "a": "出锅装盘",
+    "d": "趁热吃 · 拌饭最好",
+    "ms": 60000
+   }
+  ]
+ },
+ {
+  "t": "可乐鸡翅",
+  "s": "甜咸口 · 新手友好",
+  "spicy": false,
+  "st": [
+   {
+    "a": "鸡翅洗净，两面各划两刀，冷水下锅焯出血沫",
+    "d": "加两片姜 · 水开煮一分钟捞出",
+    "ms": 120000
+   },
+   {
+    "a": "少油中火，把鸡翅煎到两面金黄",
+    "d": "鸡皮朝下先煎 · 出油后不粘锅",
+    "ms": 180000
+   },
+   {
+    "a": "倒可乐没过鸡翅，加一勺生抽、一勺料酒",
+    "d": "大约小半罐可乐 · 不用再加水",
+    "ms": 60000
+   },
+   {
+    "a": "中火焖十五分钟，再开大火收汁",
+    "d": "筷子能扎透就收汁 · 边收边翻防粘底",
+    "ms": 900000
+   },
+   {
+    "a": "出锅装盘，撒白芝麻",
+    "d": "趁热吃 · 汤汁拌饭一绝",
+    "ms": 60000
+   }
+  ]
+ },
+ {
+  "t": "拍黄瓜",
+  "s": "凉拌 · 十分钟搞定",
+  "spicy": false,
+  "st": [
+   {
+    "a": "黄瓜洗净，用刀拍裂，切成小段",
+    "d": "先整根拍再切 · 拍过的更入味",
+    "ms": 120000
+   },
+   {
+    "a": "加一撮盐腌五分钟，倒掉杀出来的水",
+    "d": "这一步决定脆不脆 · 别省",
+    "ms": 300000
+   },
+   {
+    "a": "加蒜末、香醋、生抽、糖、香油拌匀",
+    "d": "蒜两瓣 · 醋一勺 · 糖小半勺",
+    "ms": 120000
+   },
+   {
+    "a": "装盘，放冰箱冷藏十分钟更爽口",
+    "d": "急着吃直接上桌也不差",
+    "ms": 600000
+   }
+  ]
+ },
+ {
+  "t": "红烧肉",
+  "s": "硬菜 · 慢工出细活",
+  "spicy": false,
+  "st": [
+   {
+    "a": "五花肉切麻将块，冷水下锅焯出血沫",
+    "d": "加姜片和料酒 · 水开煮三分钟捞出",
+    "ms": 180000
+   },
+   {
+    "a": "锅里少油，下冰糖小火炒糖色",
+    "d": "糖化开变枣红色、起小泡就下肉 · 别炒黑",
+    "ms": 120000
+   },
+   {
+    "a": "下肉块翻炒，让每块都裹上糖色",
+    "d": "加生抽两勺、老抽半勺、料酒一勺",
+    "ms": 120000
+   },
+   {
+    "a": "加热水没过肉，大火烧开转小火焖四十分钟",
+    "d": "一定要热水 · 盖盖子 · 中途别开盖",
+    "ms": 2400000
+   },
+   {
+    "a": "开大火收汁，勤翻动防糊底",
+    "d": "汁变浓稠挂住肉就关火 · 尝一下补盐",
+    "ms": 300000
+   },
+   {
+    "a": "装盘，把剩下的汁浇在肉上",
+    "d": "配一碗米饭 · 剩下的冷藏能放三天",
+    "ms": 60000
+   }
+  ]
+ },
+ {
+  "t": "蛋炒饭",
+  "s": "十分钟 · 剩饭救星",
+  "spicy": false,
+  "st": [
+   {
+    "a": "隔夜饭用手抓散，鸡蛋打散加一小撮盐",
+    "d": "饭粒要粒粒分开 · 新煮的饭太湿不好炒",
+    "ms": 120000
+   },
+   {
+    "a": "热锅倒油，油热后倒蛋液，炒散盛出",
+    "d": "油要稍多一点 · 蛋嫩一点盛出，后面还要回锅",
+    "ms": 60000
+   },
+   {
+    "a": "同一锅下饭粒，中火炒散，加盐",
+    "d": "用铲子压散结块 · 炒到饭粒在锅里跳",
+    "ms": 180000
+   },
+   {
+    "a": "倒回鸡蛋，撒葱花，大火翻炒出锅",
+    "d": "最后三十秒大火 · 出锅前尝一口咸淡",
+    "ms": 60000
+   }
+  ]
+ },
+ {
+  "t": "紫菜蛋花汤",
+  "s": "五分钟 · 配饭刚好",
+  "spicy": false,
+  "st": [
+   {
+    "a": "锅里烧一锅水，同时把鸡蛋打散",
+    "d": "水要多一点 · 蛋液打散到看不见蛋清",
+    "ms": 180000
+   },
+   {
+    "a": "紫菜撕成小块，虾皮冲一下备用",
+    "d": "紫菜不用泡 · 冲掉浮灰就行",
+    "ms": 60000
+   },
+   {
+    "a": "水开下紫菜，转小火，沿锅边淋蛋液",
+    "d": "淋完等十秒再搅 · 一搅就成蛋花",
+    "ms": 120000
+   },
+   {
+    "a": "加盐、点几滴香油，撒葱花出锅",
+    "d": "香油最后放 · 早放香味就跑了",
+    "ms": 60000
+   }
+  ]
+ },
+ {
+  "t": "西红柿鸡蛋面",
+  "s": "一锅出 · 汤面",
+  "spicy": false,
+  "st": [
+   {
+    "a": "西红柿切块，鸡蛋打散加一小撮盐",
+    "d": "西红柿去皮口感更好 · 划十字用开水烫一下",
+    "ms": 180000
+   },
+   {
+    "a": "热锅倒油，炒蛋盛出",
+    "d": "油稍多 · 蛋炒到刚凝固就盛",
+    "ms": 60000
+   },
+   {
+    "a": "同一锅下西红柿，炒到出汁，加热水烧开",
+    "d": "炒到番茄软烂出红汁 · 加热水两碗",
+    "ms": 240000
+   },
+   {
+    "a": "下面条，中火煮到面条变软",
+    "d": "挂面大约三到五分钟 · 中途点一次凉水",
+    "ms": 300000
+   },
+   {
+    "a": "倒回鸡蛋，加盐调味，撒葱花出锅",
+    "d": "尝一口再决定加不加盐",
+    "ms": 60000
+   }
+  ]
+ },
+ {
+  "t": "清蒸鲈鱼",
+  "s": "蒸八分钟 · 看着高级",
+  "spicy": false,
+  "st": [
+   {
+    "a": "鲈鱼洗净，两面各划两刀，抹盐和料酒腌十分钟",
+    "d": "鱼身里外都抹到 · 腌完把渗出的水倒掉",
+    "ms": 600000
+   },
+   {
+    "a": "盘底铺姜片和葱段，把鱼放上去",
+    "d": "垫高一点让蒸汽循环 · 鱼肚里也塞两片姜",
+    "ms": 60000
+   },
+   {
+    "a": "水开后上锅，大火蒸八分钟",
+    "d": "一定要水开再放 · 中途别开盖",
+    "ms": 480000
+   },
+   {
+    "a": "倒掉盘中蒸出的水，铺新葱丝，淋蒸鱼豉油",
+    "d": "那盘水是腥的，一定倒掉 · 豉油沿盘边淋",
+    "ms": 60000
+   },
+   {
+    "a": "烧一勺热油，浇在葱丝上",
+    "d": "油要冒烟 · 浇上去听到「刺啦」一声才对",
+    "ms": 60000
+   }
+  ]
+ },
+ {
+  "t": "麻婆豆腐",
+  "s": "下饭 · 麻辣鲜香",
+  "spicy": true,
+  "st": [
+   {
+    "a": "豆腐切方块，放淡盐水里泡五分钟",
+    "d": "盐水泡过不易碎 · 切两厘米见方",
+    "ms": 300000
+   },
+   {
+    "a": "锅里少油，下肉末炒散，加豆瓣酱炒出红油",
+    "d": "小火炒豆瓣酱 · 出红油才香",
+    "ms": 180000
+   },
+   {
+    "a": "加一碗水烧开，下豆腐小火煮三分钟",
+    "d": "用铲子背推，别翻 · 别让豆腐碎",
+    "ms": 180000
+   },
+   {
+    "a": "分两次勾芡，撒花椒粉",
+    "d": "第一次芡汁略稀 · 第二次收浓挂住豆腐",
+    "ms": 120000
+   },
+   {
+    "a": "出锅装盘，撒葱花和花椒粉",
+    "d": "趁热吃 · 配米饭",
+    "ms": 60000
+   }
+  ]
+ },
+ {
+  "t": "蒜蓉西兰花",
+  "s": "五分钟 · 清爽解腻",
+  "spicy": false,
+  "st": [
+   {
+    "a": "西兰花掰成小朵，淡盐水泡十分钟",
+    "d": "泡掉缝隙里的灰 · 掰比切好，切会掉渣",
+    "ms": 600000
+   },
+   {
+    "a": "水开加一撮盐和几滴油，西兰花焯一分钟捞出",
+    "d": "加盐加油能保持翠绿 · 捞出立刻过凉水",
+    "ms": 60000
+   },
+   {
+    "a": "锅里倒油，下蒜末小火炒香",
+    "d": "蒜末别炒焦 · 微黄就够",
+    "ms": 60000
+   },
+   {
+    "a": "下西兰花大火翻炒，加盐出锅",
+    "d": "炒一分钟就够 · 炒久会出水变软",
+    "ms": 60000
+   }
+  ]
+ },
+ {
+  "t": "糖醋排骨",
+  "s": "酸甜 · 宴客菜",
+  "spicy": false,
+  "st": [
+   {
+    "a": "排骨冷水下锅焯水，加姜片料酒",
+    "d": "水开煮三分钟 · 撇掉浮沫捞出",
+    "ms": 180000
+   },
+   {
+    "a": "锅里少油，排骨下锅煎到两面微黄",
+    "d": "擦干再下锅 · 煎出油更香",
+    "ms": 240000
+   },
+   {
+    "a": "倒糖醋汁：一勺料酒、两勺生抽、三勺糖、四勺醋",
+    "d": "记住 1234 · 再加半碗水",
+    "ms": 120000
+   },
+   {
+    "a": "加热水没过排骨，小火焖三十分钟",
+    "d": "盖盖子 · 中途别开盖",
+    "ms": 1800000
+   },
+   {
+    "a": "开大火收汁，收到汁挂在排骨上发亮",
+    "d": "勤翻防糊 · 汁浓就关火",
+    "ms": 300000
+   },
+   {
+    "a": "装盘，撒白芝麻",
+    "d": "趁热吃 · 凉了糖会硬",
+    "ms": 60000
+   }
+  ]
+ }
+];
+
+/* ---- 常量：全部对应 index.js ---- */
+const APP_LABEL = "web";
+const MENU_COLS   = [{ x: 30, width: 280 }, { x: 330, width: 280 }];
+const MENU_ROWS   = 6;
+const MENU_ROW_Y  = 172;
+const MENU_ROW_H  = 34;
+const MENU_MAX    = MENU_ROWS * MENU_COLS.length;
+const ROW_FONT    = 20;
+const ROW_BOX_H   = 30;
+const PICK_ANIM_MS = 900;
+const PICK_CY     = 208;
+const ROW_RGB     = [0, 200, 90];
+const ROW_HOT_RGB = [0, 255, 120];
+const PICK_RGB    = [255, 255, 235];
+const SAY_MS      = 8000;
+
+/* ---- 小工具 ---- */
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function mixRgb(a, b, k) {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * k),
+    Math.round(a[1] + (b[1] - a[1]) * k),
+    Math.round(a[2] + (b[2] - a[2]) * k)
+  ];
+}
+const easeInOut = (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
+const rgb = (c) => "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+function fmtMs(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+/* ---- DOM：按眼镜端的控件表逐个建出来 ---- */
+const stage = document.getElementById("stage");
+const E = {};
+const cacheT = {};   // 文本缓存：值没变就不碰 DOM（和 setText 一个思路）
+const cacheG = {};   // 几何缓存
+
+function mk(id, opts) {
+  const d = document.createElement("div");
+  d.className = "t" + (opts && opts.wrap ? " wrap" : "");
+  d.id = id;
+  if (opts && opts.row !== undefined) {
+    d.dataset.row = opts.row;
+    d.classList.add("row");
+    d.addEventListener("click", () => { pickDish(Number(d.dataset.row)); });
+  }
+  stage.appendChild(d);
+  E[id] = d;
+  return d;
+}
+
+/* 一行字：位置/尺寸/字号/颜色 —— 和 makeText 一一对应 */
+function place(id, x, y, w, h, size, color, align) {
+  const sig = [x, y, w, h, size, color.join(","), align].join("|");
+  if (cacheG[id] === sig) return;
+  cacheG[id] = sig;
+  const s = E[id].style;
+  s.left = x + "px"; s.top = y + "px";
+  s.width = w + "px"; s.height = h + "px";
+  s.fontSize = size + "px";
+  s.color = rgb(color);
+  s.justifyContent = align === "left" ? "flex-start" : "center";
+  s.textAlign = align === "left" ? "left" : "center";
+}
+function text(id, str) {
+  if (cacheT[id] === str) return;
+  cacheT[id] = str;
+  E[id].textContent = str;
+}
+
+/* 控件表（坐标逐条抄自 start()） */
+mk("progress"); place("progress", 0, 26, 640, 30, 14, [0, 170, 0], "center");
+mk("timer");    place("timer",    0, 64, 640, 34, 20, [255, 200, 0], "center");
+mk("partial");  place("partial", 12, 92, 360, 26, 15, [255, 255, 255], "left");
+mk("main");     place("main",     0, 120, 640, 36, 30, [0, 230, 0], "center");
+mk("sub");      place("sub",      0, 330, 640, 60, 16, [0, 170, 0], "center");
+mk("mic");      place("mic",      0, 404, 640, 24, 12, [0, 130, 0], "center");
+mk("footer");   place("footer",   0, 448, 640, 24, 12, [0, 110, 0], "center");
+E.main.classList.add("wrap");
+
+const ROWS = [];
+for (let i = 0; i < MENU_MAX; i++) {
+  const col = i < MENU_ROWS ? 0 : 1;
+  const row = i < MENU_ROWS ? i : i - MENU_ROWS;
+  const id = "row" + i;
+  mk(id, { row: i });
+  ROWS.push(id);
+  place(id, MENU_COLS[col].x, MENU_ROW_Y + row * MENU_ROW_H, MENU_COLS[col].width,
+        ROW_BOX_H, ROW_FONT, ROW_RGB, "center");
+}
+
+/* ---- 状态 ---- */
+const state = {
+  mode: "menu",           // menu | cook | done
+  sel: 0,                 // 菜单里的高亮项（键盘用）
+  noSpicy: false,
+  pick: null,             // { index, t0 } 选中动画
+  session: null,          // { dish, idx, remainMs, running, paused }
+  done: [],               // 做完的菜
+  notice: { text: "", until: 0, color: [255, 180, 0] },
+  heard: { text: "", until: 0 },
+  heardLive: ""
+};
+
+/* ---- 语音状态 ---- */
+const voice = { supported: false, listening: false, rec: null, error: "" };
+
+/* ---- 上屏文字：只改 DOM 上真正变了的字 ---- */
+function heardLine(now) {
+  if (state.heard.text && now < state.heard.until) return "🗣 " + state.heard.text;
+  if (state.heardLive) return "🎙 " + state.heardLive;
+  return "";
+}
+function say(text, color, ms) {
+  state.notice = { text: text, until: performance.now() + (ms || 3000), color: color || [255, 180, 0] };
+}
+
+/* ============================ 菜单页 ============================ */
+function paintMenu(now) {
+  const total = Math.min(DISHES.length, MENU_MAX);
+  if (E.main.style.height !== "36px") place("main", 0, 120, 640, 36, 30, [0, 230, 0], "center");
+  text("progress", "菜单 · 1-" + total + " · " + APP_LABEL);
+  text("main", "今天做什么菜？");
+  text("sub", "");
+
+  const anim = state.pick;
+  const p = anim ? Math.min(1, (now - anim.t0) / PICK_ANIM_MS) : -1;
+  const e = p < 0 ? 0 : easeInOut(p);
+
+  for (let i = 0; i < MENU_MAX; i++) {
+    const id = ROWS[i];
+    if (i >= total) { text(id, ""); continue; }
+    const pos = rowPos(i);
+    const title = String(i + 1).padStart(2, " ") + "  " + DISHES[i].t;
+
+    if (p < 0) {
+      const spicy = state.noSpicy && DISHES[i].spicy;
+      place(id, MENU_COLS[pos.col].x, pos.y, MENU_COLS[pos.col].width,
+            ROW_BOX_H, ROW_FONT,
+            spicy ? [0, 110, 50] : (i === state.sel ? ROW_HOT_RGB : ROW_RGB), "center");
+      text(id, spicy ? title + "（辣）" : title);
+    } else if (i === anim.index) {
+      const size = Math.round(ROW_FONT + 12 * e);
+      place(id, MENU_COLS[pos.col].x, Math.round(pos.y + (PICK_CY - pos.y) * e),
+            640 - MENU_COLS[pos.col].x, size + 14, size,
+            mixRgb(ROW_HOT_RGB, PICK_RGB, e), "center");
+      text(id, title);
+    } else {
+      const fade = Math.max(0, 1 - e * 1.55);
+      place(id, MENU_COLS[pos.col].x, pos.y, MENU_COLS[pos.col].width,
+            ROW_BOX_H, ROW_FONT, mixRgb([0, 0, 0], ROW_RGB, fade), "center");
+      text(id, fade < 0.06 ? "" : title);
+    }
+  }
+
+  // 菜单页最上面那行留给临时提示（和眼镜端一样压在 y=64 那条）
+  const n = state.notice;
+  if (n.text && now < n.until) { place("timer", 0, 64, 640, 34, 20, n.color, "center"); text("timer", n.text); }
+  else { place("timer", 0, 64, 640, 34, 20, [255, 200, 0], "center"); text("timer", ""); }
+}
+function rowPos(i) {
+  const col = i < MENU_ROWS ? 0 : 1;
+  const row = i < MENU_ROWS ? i : i - MENU_ROWS;
+  return { col: col, y: MENU_ROW_Y + row * MENU_ROW_H };
+}
+
+/* ============================ 跟做页 ============================ */
+function step() {
+  const s = state.session;
+  if (!s) return null;
+  return s.dish.st[s.idx] || null;
+}
+function paintCook(now) {
+  const s = state.session;
+  const st = step();
+  if (!s || !st) return;
+  place("main", 0, 120, 640, 200, 30, [0, 230, 0], "center");
+  text("progress", "第 " + (s.idx + 1) + " 步 / 共 " + s.dish.st.length + " 步");
+  text("main", st.a);
+  text("sub", st.d);
+
+  // 倒计时：没开始只报时长和口令；跑起来报剩余；到点提示下一步
+  let tTxt = "", tCol = [255, 200, 0];
+  if (s.paused) { tTxt = "已暂停 · 说「继续」接着做"; tCol = [255, 90, 60]; }
+  else if (s.running) {
+    tTxt = s.remainMs > 0 ? "⏱ " + fmtMs(s.remainMs) : "⏰ 时间到 · 说「下一步」";
+  } else {
+    tTxt = st.ms ? "⏱ " + fmtMs(s.remainMs) + " · 说「开始计时」" : "";
+  }
+  // 临时提示优先（比如「咸了」的应对）
+  const n = state.notice;
+  if (n.text && now < n.until) { tTxt = n.text; tCol = n.color; }
+  place("timer", 0, 64, 640, 34, 20, tCol, "center");
+  text("timer", tTxt);
+}
+
+/* ============================ 收工页 ============================ */
+function paintDone(now) {
+  place("main", 0, 120, 640, 200, 30, [0, 230, 0], "center");
+  text("progress", "收工 · 今天做了 " + state.done.length + " 道菜");
+  text("main", "🎉 收工！今天做了 " + state.done.length + " 道菜");
+  text("sub", "说「再做一道」回菜单 · 说「收工」结束");
+  text("timer", "");
+}
+
+/* ============================ 底部两行 ============================ */
+function paintChrome(now) {
+  // 识别行：草稿=亮绿、整句=黄（8 秒）
+  const live = state.heard.text && now >= state.heard.until;
+  place("partial", 12, 92, 360, 26, 15,
+        live ? [255, 200, 0] : [0, 255, 120], "left");
+  text("partial", heardLine(now));
+
+  // 麦克风行
+  let mTxt, mCol;
+  if (!voice.supported) { mTxt = "⚠ 这个浏览器没有语音识别 · 下面打字一样能用"; mCol = [255, 120, 60]; }
+  else if (voice.listening) { mTxt = "🟢 已接通 · 我在听，请说"; mCol = [0, 255, 90]; }
+  else { mTxt = "🎤 点下方「开始听」打开麦克风"; mCol = [0, 130, 0]; }
+  place("mic", 0, 404, 640, 24, 12, mCol, "center");
+  text("mic", mTxt);
+
+  // 底栏
+  let f;
+  if (state.mode === "menu") f = "请说编号 1-" + Math.min(DISHES.length, MENU_MAX) + " · 也可以说菜名";
+  else if (state.mode === "cook") f = "说「下一步」继续 · 说「换菜」重选一道";
+  else f = "说「再做一道」回菜单 · 说「收工」结束";
+  place("footer", 0, 448, 640, 24, 12, [0, 110, 0], "center");
+  text("footer", f);
+}
+
+/* ============================ 交互 ============================ */
+function pickDish(i) {
+  if (state.mode !== "menu" || state.pick) return;
+  if (i < 0 || i >= Math.min(DISHES.length, MENU_MAX)) return;
+  if (state.noSpicy && DISHES[i].spicy) {
+    say("这道是辣的 · 你说过不吃辣", [255, 180, 0], 2200);
+    return;
+  }
+  state.sel = i;
+  state.pick = { index: i, t0: performance.now() };
+}
+
+function startDish(i) {
+  const d = DISHES[i];
+  state.pick = null;
+  state.mode = "cook";
+  state.session = {
+    dish: { t: d.t, st: d.st },
+    idx: 0,
+    remainMs: (d.st[0] && d.st[0].ms) || 0,
+    running: false,
+    paused: false
+  };
+  state.heardLive = "";
+}
+
+function nextStep() {
+  const s = state.session;
+  if (!s) return;
+  if (s.idx + 1 >= s.dish.st.length) {
+    state.done.push(s.dish.t);
+    state.mode = "done";
+    state.session = null;
+    return;
+  }
+  s.idx += 1;
+  const st = s.dish.st[s.idx];
+  s.remainMs = st.ms || 0;
+  s.running = false;
+  s.paused = false;
+}
+
+const TROUBLE = [
+  [/咸/, "咸了：加一小勺糖压咸，或补点配菜摊薄，别加水冲"],
+  [/淡/, "淡了：补一撮盐翻匀，尝一口再加，别一次倒多"],
+  [/糊|焦/, "糊了：立刻转小火，糊的那块拨到一边别再翻"],
+  [/干|粘/, "干了：沿锅边淋两勺热水，边翻边收"],
+  [/油多|太油/, "油多：把多余的油舀出来，下一道菜正好用"],
+  [/老|柴/, "老了：盛出来等配菜出汁再回锅，翻两下就出锅"],
+  [/生|没熟/, "没熟：转中小火盖盖焖一会儿，别用大火催"]
+];
+
+function menuCmd(t) {
+  if (/不吃辣|不要辣|别放辣|不放辣|怕辣/.test(t)) {
+    state.noSpicy = true;
+    say("已避开辣的（麻婆豆腐不再推荐）", [0, 255, 120], 3000);
+    return;
+  }
+  if (/吃辣|可以辣|要辣/.test(t)) {
+    state.noSpicy = false;
+    say("辣的解禁了", [0, 255, 120], 2400);
+    return;
+  }
+  if (/推荐|随便|你决定|看着办|不知道/.test(t)) {
+    let best = 0;
+    for (let i = 0; i < DISHES.length; i++) {
+      if (state.noSpicy && DISHES[i].spicy) continue;
+      best = i; break;
+    }
+    say("那就 " + (best + 1) + " " + DISHES[best].t, [0, 255, 120], 2400);
+    pickDish(best);
+    return;
+  }
+  // 编号：阿拉伯数字 / 中文数字
+  const cn = { "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10, "十一": 11 };
+  let n = 0;
+  const m = t.match(/(\d{1,2})/);
+  if (m) n = Number(m[1]);
+  else {
+    for (const k of Object.keys(cn)) if (t.indexOf(k) === 0) { n = cn[k]; break; }
+  }
+  if (n >= 1 && n <= Math.min(DISHES.length, MENU_MAX)) { pickDish(n - 1); return; }
+  // 菜名（支持只说两个字，比如「番茄」）
+  for (let i = 0; i < DISHES.length; i++) {
+    const title = DISHES[i].t;
+    if (t.indexOf(title) >= 0) { pickDish(i); return; }
+  }
+  for (let i = 0; i < DISHES.length; i++) {
+    const title = DISHES[i].t;
+    for (let k = 0; k + 2 <= title.length; k++) {
+      if (t.indexOf(title.slice(k, k + 2)) >= 0) { pickDish(i); return; }
+    }
+  }
+  say("菜单里没有「" + t + "」· 说编号或菜名", [255, 180, 0], 3000);
+}
+
+function cookCmd(t) {
+  const s = state.session;
+  if (!s) return;
+  if (/换菜|换一道|重新选|换个菜|回菜单|菜单/.test(t)) {
+    state.mode = "menu"; state.session = null; state.pick = null;
+    say("回菜单 · 说编号重选", [0, 255, 120], 2400);
+    return;
+  }
+  if (/不做了|收工|结束|不炒了/.test(t)) {
+    state.done.push(s.dish.t);
+    state.mode = "done"; state.session = null;
+    return;
+  }
+  if (/暂停|停一下|等等|等一下|稍等/.test(t)) {
+    s.paused = true; s.running = false;
+    return;
+  }
+  if (/继续|接着做|开始吧|恢复/.test(t)) {
+    if (s.paused) { s.paused = false; say("继续 · 锅还在火上", [0, 255, 120], 2000); return; }
+  }
+  if (/计时|定时|几分钟|开始计/.test(t)) {
+    if (s.remainMs > 0) { s.running = true; s.paused = false; }
+    return;
+  }
+  if (/上一步|前一步|回到上/.test(t)) {
+    if (s.idx > 0) {
+      s.idx -= 1;
+      s.remainMs = s.dish.st[s.idx].ms || 0;
+      s.running = false; s.paused = false;
+    }
+    return;
+  }
+  if (/下一步|下一部|好了|完成|可以了|做完了|继续做|行了|^好$/.test(t)) { nextStep(); return; }
+  for (const [re, ans] of TROUBLE) {
+    if (re.test(t)) { say(ans, [255, 200, 0], 5000); return; }
+  }
+  say("这句我先记下 · 说「下一步」继续", [255, 180, 0], 2600);
+}
+
+function doneCmd(t) {
+  if (/再做|再来|下一道|继续做|回菜单/.test(t)) {
+    state.mode = "menu"; state.pick = null;
+    say("好 · 再选一道", [0, 255, 120], 2200);
+    return;
+  }
+  if (/收工|结束|不用|不了|再见/.test(t)) { say("收工愉快 🍽", [0, 255, 120], 3000); }
+}
+
+function handle(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return;
+  state.heard = { text: t, until: performance.now() + SAY_MS };
+  state.heardLive = "";
+  if (state.mode === "menu") menuCmd(t);
+  else if (state.mode === "cook") cookCmd(t);
+  else doneCmd(t);
+}
+
+/* ---- 主循环：和眼镜端一样跑 rAF，动画/倒计时都在这里推进 ---- */
+let lastT = performance.now();
+function loop(now) {
+  const dt = Math.min(200, now - lastT);
+  lastT = now;
+
+  if (state.pick && now - state.pick.t0 > PICK_ANIM_MS) startDish(state.pick.index);
+
+  const s = state.session;
+  if (s && s.running && !s.paused) {
+    s.remainMs = Math.max(0, s.remainMs - dt);
+    if (s.remainMs === 0) s.running = false;
+  }
+
+  if (state.mode === "menu") paintMenu(now);
+  else if (state.mode === "cook") paintCook(now);
+  else paintDone(now);
+  paintChrome(now);
+
+  requestAnimationFrame(loop);
+}
+
+/* ---- 键盘 ---- */
+window.addEventListener("keydown", (e) => {
+  if (e.target && e.target.tagName === "INPUT") {
+    if (e.key === "Enter") { handle(e.target.value); e.target.value = ""; }
+    return;
+  }
+  if (state.mode === "menu") {
+    const total = Math.min(DISHES.length, MENU_MAX);
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") { state.sel = (state.sel + 1) % total; e.preventDefault(); }
+    else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { state.sel = (state.sel + total - 1) % total; e.preventDefault(); }
+    else if (e.key === "Enter") { pickDish(state.sel); e.preventDefault(); }
+  } else if (state.mode === "cook") {
+    if (e.key === " " || e.key === "Enter") { nextStep(); e.preventDefault(); }
+  } else {
+    if (e.key === " " || e.key === "Enter") { state.mode = "menu"; e.preventDefault(); }
+  }
+});
+
+/* ---- 打字输入 ---- */
+const input = document.getElementById("say");
+document.getElementById("send").addEventListener("click", () => {
+  handle(input.value);
+  input.value = "";
+  input.focus();
+});
+
+/* ---- 语音（Chrome / Edge 可用；不行就打字）---- */
+const micBtn = document.getElementById("mic");
+function initVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { voice.supported = false; return; }
+  voice.supported = true;
+  const rec = new SR();
+  rec.lang = "zh-CN";
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.onstart = () => { voice.listening = true; micBtn.classList.add("on"); micBtn.textContent = "🎤 正在听 · 点此停"; };
+  rec.onend = () => {
+    voice.listening = false;
+    micBtn.classList.remove("on");
+    micBtn.textContent = "🎤 开始听";
+    if (voice.want) { try { rec.start(); } catch (e) {} }   // 浏览器自己会断，断了就续上
+  };
+  rec.onerror = (ev) => {
+    voice.error = ev.error || "";
+    if (voice.error === "not-allowed" || voice.error === "service-not-allowed") {
+      voice.want = false;
+      say("麦克风没授权 · 用下面打字也行", [255, 120, 60], 4000);
+    }
+  };
+  rec.onresult = (ev) => {
+    let interim = "", final = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) final += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    if (interim) state.heardLive = interim.trim();
+    if (final.trim()) handle(final.trim());
+  };
+  voice.rec = rec;
+}
+micBtn.addEventListener("click", () => {
+  if (!voice.supported) {
+    say("这个浏览器没有语音识别 · 打字一样能用", [255, 120, 60], 3200);
+    return;
+  }
+  if (voice.listening) { voice.want = false; try { voice.rec.stop(); } catch (e) {} }
+  else { voice.want = true; try { voice.rec.start(); } catch (e) {} }
+});
+
+/* ---- 快捷指令按钮（演示用，等于"说这句话"）---- */
+const CHIPS = ["1", "2", "不吃辣", "推荐", "开始计时", "下一步", "上一步", "换菜", "收工"];
+const chips = document.getElementById("chips");
+CHIPS.forEach((c) => {
+  const b = document.createElement("button");
+  b.className = "chip";
+  b.textContent = c;
+  b.addEventListener("click", () => handle(c));
+  chips.appendChild(b);
+});
+
+/* ---- 重新开始 ---- */
+document.getElementById("reset").addEventListener("click", () => {
+  state.mode = "menu";
+  state.sel = 0;
+  state.pick = null;
+  state.session = null;
+  state.done = [];
+  state.noSpicy = false;
+  state.heard = { text: "", until: 0 };
+  state.heardLive = "";
+  state.notice = { text: "", until: 0, color: [255, 180, 0] };
+});
+
+/* ---- 缩放：整块等比放大到窗口里，逻辑坐标始终是 640×480 ---- */
+function fit() {
+  const k = clamp(Math.min((window.innerWidth - 48) / 640, (window.innerHeight - 250) / 480), 0.45, 2.2);
+  const frame = document.getElementById("frame");
+  frame.style.width = Math.round(640 * k) + "px";
+  frame.style.height = Math.round(480 * k) + "px";
+  stage.style.transform = "scale(" + k + ")";
+}
+
+/* ---- 启动 ---- */
+initVoice();
+fit();
+window.addEventListener("resize", fit);
+requestAnimationFrame((t) => { lastT = t; loop(t); });
+</script>
+</body>
+</html>

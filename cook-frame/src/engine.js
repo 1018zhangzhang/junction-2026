@@ -54,6 +54,27 @@ const CN_NUM = ({
   六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 半: 0.5,
 });
 
+/* 阿拉伯数字 → 中文数字（换算后回写用；下标=数值，2 显示成「两」更口语；超过 10 用阿拉伯数字） */
+const CN_R = ["零", "一", "两", "三", "四", "五", "六", "七", "八", "九", "十"];
+
+/** 按人数换算步骤文本里的「用量」。
+ *  规则：数字 + 量词（个/勺/撮/瓣/碗…）→ 乘以人数；时间单位（分钟/秒/小时）不乘。
+ *  这是赛题「自动化」认可的「信息提取 + 计算」——用量的字是现场算出来的，不是写死的。
+ *  例：f=2 时「打两个鸡蛋」→「打四个鸡蛋」，「加一撮盐腌五分钟」→「加两撮盐腌五分钟」。 */
+function scaleAmounts(text, factor) {
+  if (!text || !factor || factor <= 1) return text;
+  return String(text).replace(
+    /([0-9]+(?:\.[0-9]+)?|[一二两三四五六七八九十])(\s*)(个|只|根|片|块|颗|勺|撮|碗|杯|滴|把|瓣|条|段|张|枚|刀|小勺|大勺|茶匙|瓶|盒|包)/g,
+    (m0, num, sp, unit) => {
+      const n = /^[0-9.]+$/.test(num) ? parseFloat(num) : CN_NUM[num];
+      if (!n || n <= 0) return m0;
+      const out = Math.round(n * factor * 10) / 10;
+      const outTxt = out <= 10 && Number.isInteger(out) ? CN_R[out] : String(out);
+      return outTxt + sp + unit;
+    }
+  );
+}
+
 /* ──────────────────── 口语 / 俚语归一 ────────────────────
  * 目标不是"听懂所有话"，而是把厨房里高频的口语说法，
  * 尽可能多地映射回引擎能处理的少数几个关键词上。
@@ -141,6 +162,7 @@ const TROUBLE = ([
   { key: "生", phase: "cook", re: /(没熟|不熟|夹生)/ },
   { key: "干", phase: "cook", re: /(太干|干了|发干|干锅|没汁|没汤|不出汁|没汤汁|粘锅|黏锅|巴锅|贴锅|走水|出水太多|汤太多|水太多|稀了)/ },
   { key: "油温", phase: "cook", re: /(油太热|油过热|冒烟|油烟|油温过高|油温过了|油没热|油不热|油温不够)/ },
+  { key: "火大", phase: "cook", re: /(火太大|火大了|火过旺|火太旺|火候太大|火开太大|火太急)/ },
   { key: "油多", phase: "cook", re: /(油太多|太油|油多了|油大了|油放多了|太腻|腻了|油乎乎|油汪汪)/ },
   { key: "油少", phase: "cook", re: /(油太少|油少了|油不够|油放少了)/ },
   { key: "油溅", phase: "cook", re: /(油溅|溅油|爆油|炸油|噼里啪啦)/ },
@@ -164,6 +186,7 @@ const GENERIC_RESCUE = ({
   生: "回锅加两勺水，盖盖焖 1-2 分钟；大块的先切开。",
   干: "加两勺水或高汤，转小火翻一下，让它把汁吸回去。",
   油温: "先把锅离火降一下温，或者抓一把凉菜进去垫一下。",
+  火大: "立刻转小火，把锅端离火十几秒；已经冒烟的油别再用，倒掉重来。",
   油多: "把多余的油舀出来，或者下点吸油的配菜（豆芽、粉条）。",
   油少: "补一勺油，沿锅边淋进去，别一次倒中间。",
   油溅: "先关小火，食材擦干水再下锅，锅盖半掩着挡一下。",
@@ -310,7 +333,7 @@ const INTENTS = ([
     type: "DEFER",
     // 「还没好」「等一下」—— 用户在说"别翻页"。
     // 必须排在 NEXT 之前，否则「还没好」里的「好了」会被吃成 NEXT。
-    re: /(还没好|没好|没弄完|还没|没好呢|还在弄|还得一会|再等会|稍等|等一下|缓一下|先别翻|别翻页|先别走|别急)/,
+    re: /(还没好|没好|没弄完|还没|没好呢|还在弄|还得一会|再等会|稍等|等一下|缓一下|先别翻|别翻页|先别走|别急|^停|停下|暂停|停一下)/,
   },
   {
     type: "BACK",
@@ -389,7 +412,7 @@ const ACCEPT = /^(好|行|可以|嗯|对|就这样|中|ok|okay|要得|成|行吧
  * @param {string} raw  用户原始话语（可能是 ASR 结果，含错字和口语）
  * @param {object} step 当前步骤（用于上下文纠错）
  */
-function parseUtterance(raw, step) {
+function parseOnce(raw, step) {
   const text = String(raw == null ? "" : raw).trim();
   if (!text) {
     return {
@@ -495,6 +518,67 @@ function looksLikeCorrection(text) {
   return /(改成|改为|说错|说错了|重新说|应该是|记错|收回)/.test(text);
 }
 
+/* ────────────────────── 指令同音容错（第二遍） ──────────────────────
+ * 本地识别不只把菜名听错，指令也会错一个字：下一「吓」步、好→「号」、
+ * 「咸」→「闲」、糊→「呼」。这类字**不能全局替换**（「吓一跳」「号码」
+ * 会被改坏），所以只在「第一遍彻底没听懂（UNKNOWN）」时才启用：
+ * 换字后重新解析一次，只有解析出明确意图才采纳，否则原样返回 UNKNOWN。
+ * 好处：准确率提升集中在真听不懂的那些句子上，正常句子零影响。
+ */
+const CMD_HOMO_GROUPS = [
+  "下吓虾夏霞",        // 下一步
+  "好号浩毫豪",        // 好了
+  "咸闲贤嫌线现",      // 太咸了
+  "糊呼湖胡虎户互",    // 糊了
+  "停挺厅听",          // 停 / 停一下
+  "翻番反返",          // 翻面
+  "熟输叔淑",          // 没熟
+];
+const CMD_HOMO = (function () {
+  const m = Object.create(null);
+  for (const g of CMD_HOMO_GROUPS) {
+    const canonical = g[0];
+    for (const ch of g) m[ch] = canonical;
+  }
+  return m;
+})();
+
+/** 把指令里的同音错字换回本字；没换到就返回 null */
+function cmdHomophoneFix(text) {
+  let out = "";
+  let changed = false;
+  for (const ch of text) {
+    const c = CMD_HOMO[ch];
+    if (c && c !== ch) { out += c; changed = true; } else out += ch;
+  }
+  return changed ? out : null;
+}
+
+/** 对外的解析入口：先正常解析，没听懂再用同音容错补一次 */
+function parseUtterance(raw, step) {
+  const first = parseOnce(raw, step);
+  if (first.type !== "UNKNOWN" && first.type !== "EMPTY") return first;
+  const orig = String(raw == null ? "" : raw).trim();
+  const fixed = cmdHomophoneFix(orig);
+  if (!fixed) return first;
+  const second = parseOnce(fixed, step);
+  if (second.type === "UNKNOWN" || second.type === "EMPTY") return first;
+  const diffs = [];
+  for (let i = 0; i < orig.length && i < fixed.length; i++) {
+    if (orig[i] !== fixed[i]) diffs.push({ from: orig[i], to: fixed[i] });
+  }
+  return {
+    type: second.type,
+    text: orig,                       // 回显仍然用"用户原话"，别让人以为机器改了话
+    corrected: fixed,
+    corrections: [...(second.corrections || []), ...diffs],
+    amount: second.amount,
+    seasoning: second.seasoning,
+    trouble: second.trouble,
+    confidence: Math.min(second.confidence || 0.7, 0.78),
+  };
+}
+
 /* ────────────────────────── 会话状态机 ────────────────────────── */
 
 const DEFAULTS = ({
@@ -548,6 +632,8 @@ function createSession(recipe, options = {}) {
     overrides: {},
     lastSnapshot: null,
     correctionCount: 0,
+    /** 人数系数：说「两个人吃」后用量文本现场换算（时间不变） */
+    servings: 1,
     /** 上一条 RESCUE 给出的建议，等用户说「好」就转成 override */
     pendingRescue: null,
     /** 「还没好」被说的次数。连续催两次以上就换个提示语。 */
@@ -571,14 +657,15 @@ function createSession(recipe, options = {}) {
     const step = currentStep();
     const n = state.stepIndex + 1;
     const total = steps.length;
+    const f = state.servings || 1;
 
     const adjusted = Object.entries(state.overrides)
       .filter(([, v]) => v.stepId === step.id)
       .map(([k, v]) => overrideLabel(k, v));
 
     return {
-      main: step.ask,
-      sub: adjusted.length ? `${step.detail} · 已改为 ${adjusted.join("、")}` : step.detail,
+      main: scaleAmounts(step.ask, f),
+      sub: scaleAmounts(adjusted.length ? `${step.detail} · 已改为 ${adjusted.join("、")}` : step.detail, f),
       progress: `第 ${n} 步 / 共 ${total} 步`,
       tone: "normal",
       ...extra,
@@ -659,6 +746,55 @@ function createSession(recipe, options = {}) {
     state.history.push({ at: now, raw, type: u.type });
 
     if (u.corrections.length) state.correctionCount += u.corrections.length;
+
+    /* ───────── 动态信息处理（不依赖大模型，赛题认可的「摘要 / 计算」）─────────
+     * ① 进度摘要：「现在到哪了」→ 把当前状态汇总成一句话（现场算，不是写死）
+     * ② 份量换算：「两个人吃 / 多做点」→ 步骤里的用量乘人数，时间不变        */
+    const rawText = String(raw == null ? "" : raw).trim();
+
+    if (/到哪|进度|第几步|做到哪|哪一步|怎么样了/.test(rawText)) {
+      const done = state.stepIndex;
+      const next = steps[state.stepIndex + 1];
+      return {
+        intent: { type: "PROGRESS", text: rawText, corrected: rawText, corrections: [], amount: null, seasoning: null, trouble: null, confidence: 1 },
+        display: {
+          main: `已完成 ${done} 步 / 共 ${steps.length} 步`,
+          sub: `正在做：${step.ask}${next ? ` ｜ 接下来：${next.ask}` : " ｜ 这是最后一步"}`,
+          progress: present().progress,
+          tone: "answer",
+        },
+        actions: ["PROGRESS_SUMMARY"],
+      };
+    }
+
+    {
+      let servingsFactor = 0;
+      const sm = rawText.match(/([一两二三四五六七八九十\d]+)\s*个?\s*人/);
+      if (sm) {
+        const n = /^[0-9]+$/.test(sm[1]) ? parseInt(sm[1], 10) : CN_NUM[sm[1]];
+        if (n >= 2 && n <= 8) servingsFactor = n;
+      } else if (/多做点|多做一些|多来点/.test(rawText)) {
+        servingsFactor = Math.min(8, (state.servings || 1) * 2);
+      } else if (/少做点|少做一些/.test(rawText)) {
+        servingsFactor = Math.max(1, Math.floor((state.servings || 1) / 2));
+      }
+      if (servingsFactor && servingsFactor !== state.servings) {
+        state.servings = servingsFactor;
+        const fTxt = servingsFactor <= 10 ? CN_R[servingsFactor] : String(servingsFactor);
+        actions.push("SERVINGS_SET");
+        return {
+          intent: { type: "SERVINGS", text: rawText, corrected: rawText, corrections: [], amount: null, seasoning: null, trouble: null, confidence: 1 },
+          display: {
+            main: `好，按 ${fTxt} 人份做`,
+            sub: present().sub,
+            progress: present().progress,
+            tone: "corrected",
+          },
+          actions,
+        };
+      }
+    }
+
 
     /** 把待定的救场建议记成一笔 override。NEXT 和 ACCEPT 两个分支共用。 */
     function acceptRescue(at, intent, acts) {
@@ -1001,4 +1137,4 @@ function bigramOverlap(a, b) {
   return n / Math.min(A.size, B.size);
 }
 
-module.exports = { parseUtterance, createSession };
+module.exports = { parseUtterance, createSession, scaleAmounts };

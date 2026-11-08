@@ -33,17 +33,25 @@ function flog(msg) {
 // 参数
 const P = {
   hiLevel: 0.03,      // 超过它 = 有声音（统计/音量条用）
-  vadLevel: 0.012,    // 判「有没有人在说话」的门槛（比 hiLevel 低，小声也算）
-  silenceMs: 700,     // 有声后安静这么久 → 自己出句（仅退回模式用）
-  minSpeechMs: 200,   // 比这短的"发声"当噪音丢掉
+  /* ★ 起说门槛（"分贝要求"就是这个数）。数越大越不灵敏、越不容易被环境噪音带跑。
+   *   0.012 → 0.008（当时为了让小声说话也能进）→ 0.02（v58c 调回来）：
+   *   0.008 时实测日志里 level=0.0002~0.0075 的底噪一直在刷新 lastVoiceAt，
+   *   于是永远等不到"说完了"，一句能录 28 秒不断句，
+   *   本地小模型就在长流里一路瞎猜（partial 越滚越长）。
+   *   觉得还是不灵敏就改回 0.012；觉得还是太敏感就加到 0.03。 */
+  vadLevel: 0.02,
+  silenceMs: 900,     // 有声后安静这么久 → 自己出句（仅退回模式用；700→900 少切碎句子）
+  minSpeechMs: 300,   // 比这短的"发声"当噪音丢掉（200→300，咳嗽/碰桌子不再当一句话）
   maxUtterMs: 12000,  // 单句保护上限
   feedEveryMs: 200,   // 每攒 200ms 音频喂一次流
   // ★ 说完一句话后，静音多久算「这句说完了」→ 出整句文字交给程序执行
   //   不是固定值：短口令（"下一步""可乐鸡翅"）等 1 秒就出，长句子最多等 2.5 秒
   //   公式：700 + 120 × 已识别字数，夹在 [minIdleMs, maxIdleMs] 之间
   //   想让整体更快：调小 minIdleMs；想让整体更宽容：调大 maxIdleMs
-  minIdleMs: 1000,
-  maxIdleMs: 2500,
+  // ★ 1000 → 1500：实测「我想吃…酸辣土豆丝」中间那一顿会被当成说完了，
+  //   只录到前半句（日志里出现过 0.2 秒的音频），云端自然只能瞎猜。
+  minIdleMs: 1500,
+  maxIdleMs: 2800,
   vocab: null         // 开流时推给 ASR 服务的词表（菜名/食材/指令词，index.js 注入）
 };
 
@@ -74,7 +82,8 @@ const st = {
     lastVoiceAt: 0,   // ★ 最后一次「听见人说话」的时间（静音计时从这里算）
     voicedMs: 0,      // 本条流累计有声时长
     hadSpeech: false, // 本条流里有没有说过话（决定空结果要不要提示重说）
-    failures: 0
+    failures: 0,
+    retryAt: 0        // 连续失败后，下一次允许重试的时间（服务重启后能自己接回来）
   },
   // 回调（由 index.js 注入，必须通过 setter）
   onUtterance: null,  // 退回模式：整句 PCM
@@ -152,6 +161,8 @@ function concatBytes(list) {
 function streamEnsureOpen() {
   const s = st.stream;
   if (s.id || s.opening) return;
+  // 连续失败后不是永久放弃：5 秒后再试一次（服务可能刚被拉起来，没必要重启应用）
+  if (s.failures >= 3 && (st.lastNow || 0) < (s.retryAt || 0)) return;
   s.opening = true;
   asr.streamOpen(P.vocab)
     .then((id) => {
@@ -169,6 +180,7 @@ function streamEnsureOpen() {
     .catch((error) => {
       s.opening = false;
       s.failures++;
+      s.retryAt = (st.lastNow || 0) + 5000;
       flog("COOK_STREAM open failed (" + s.failures + "): " + ((error && error.message) || error));
     });
 }
@@ -224,7 +236,7 @@ function effectiveLen(text) {
 function idleThreshold(s) {
   // 字数按 12 封顶，免得因为字多白白多等一秒
   const len = Math.min(effectiveLen(s.partial), 12);
-  return Math.min(P.maxIdleMs, Math.max(P.minIdleMs, 700 + len * 120));
+  return Math.min(P.maxIdleMs, Math.max(P.minIdleMs, 900 + len * 120));
 }
 
 function streamFinalize(now, force, why) {
@@ -242,8 +254,9 @@ function streamFinalize(now, force, why) {
   // 这句话的音频（用来重新精识别一次：整句喂给识别器比流式拼接准得多）
   const pcm = st.sentChunks.length ? buildPcm(st.sentChunks) : null;
   st.sentChunks = [];
+  const pcmMs = pcm ? Math.round(pcm.length / 16) : 0;   // 16kHz 单声道：1ms = 16 个采样
   flog("COOK_STREAM closing " + (why || (force ? "force" : Math.round(idle) + "ms idle"))
-    + " | need=" + need + "ms speech=" + s.voicedMs + "ms");
+    + " | need=" + need + "ms speech=" + s.voicedMs + "ms audio=" + pcmMs + "ms");
   const id = s.id;
   s.id = null;
   s.partial = "";
@@ -261,10 +274,21 @@ function streamFinalize(now, force, why) {
   const batchP = (pcm && pcm.length >= 2400)
     ? Promise.resolve(asr.transcribe(pcm, 16000, P.vocab)).catch(() => null)
     : Promise.resolve(null);
+  // ★ 云端精识别最慢，不能让它拖住整句响应：最多等 2.6 秒，超时先用本地流式结果顶上。
+  //   （云端若之后才回来，这一句已经执行过了，不再重复触发，避免"一句话做两步"。）
+  let batchTimedOut = false;
+  const cappedP = Promise.race([
+    batchP,
+    new Promise((resolve) => setTimeout(() => { batchTimedOut = true; resolve(null); }, 3200)),
+  ]);
 
-  Promise.all([closeP, batchP]).then(([streamText, batchText]) => {
+  Promise.all([closeP, cappedP]).then(([streamText, batchText]) => {
     // 优先用整句精识别的结果；它没结果时才退回流式的
-    const text = (batchText && String(batchText).trim()) || (streamText && String(streamText).trim()) || "";
+    // ★ 两路结果都要过「有没有意义」的筛子：Vosk 没听清会给 "Okay." / "."，
+    //   以前这种会被当成"听清了"，界面就显示「听到「.」· 没对上」。
+    const clean = (v) => (typeof asr.validText === "function" ? asr.validText(v) : (v || ""));
+    const text = clean(batchText) || clean(streamText) || "";
+    if (batchTimedOut) flog("COOK_STREAM batch timeout " + 3200 + "ms → 用流式结果");
     flog("COOK_STREAM final " + JSON.stringify(text)
       + " | batch=" + JSON.stringify(batchText) + " stream=" + JSON.stringify(streamText));
     // ★ 回调没注入的话，识别结果会全部丢掉（界面上就是「能识别但不执行、也没字」）
@@ -377,7 +401,8 @@ function poll(now) {
     }
   }
   // 流式驱动：开流 → 喂流 → 静音收尾
-  if (st.stream.healthy || st.stream.failures < 3) {
+  // ★ 失败 3 次不再永久关死：到 retryAt 会再试一次，服务重启后 5 秒内自动接回
+  if (st.stream.healthy || st.stream.failures < 3 || now >= (st.stream.retryAt || 0)) {
     // 看门狗：喂流请求卡住超 4 秒 → 强制解锁当失败（防止 feeding 永久卡死）
     if (st.stream.feeding && now - st.stream.feedStartedAt > 4000) {
       st.stream.feeding = false;

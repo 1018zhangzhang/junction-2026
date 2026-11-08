@@ -1,0 +1,35 @@
+{
+  "_说明": "模板文件，代码不会读它。想启用联网能力：复制成 llm.json 放到应用数据目录（不要放进 src），把你的密钥填进去。一个文件同时管「脑子」（大模型）和「耳朵」（云端语音识别）。不填 = 纯离线运行，所有功能照常。",
+  "_哪些大模型能用": "任何 OpenAI 兼容的 Chat Completions 接口：硅基流动 / 智谱 / 阿里百炼 / 火山方舟 / DeepSeek / OpenRouter / 本地 Ollama（http://127.0.0.1:11434/v1/chat/completions）",
+  "_谁的语音识别能用": "任何 OpenAI 兼容的 /v1/audio/transcriptions：硅基流动 SenseVoice（中文很准、有免费额度）/ 阿里 paraformer / 讯飞 / 豆包",
+  "endpoint": "https://api.siliconflow.cn/v1/chat/completions",
+  "model": "Qwen/Qwen3-8B",
+  "apiKey": "把这里换成你自己的密钥，别提交到仓库",
+  "timeoutMs": 8000,
+  "asr": {
+    "_说明": "流式（实时字幕）永远走本机 Vosk，不用配。final 是整句精识别，填了才启用；apiKey 留空 = 关闭，等于原来的纯本地行为。",
+    "stream": {
+      "endpoint": "http://127.0.0.1:5001/asr",
+      "model": "vosk-small-cn"
+    },
+    "final": {
+      "endpoint": "https://api.siliconflow.cn/v1/audio/transcriptions",
+      "model": "FunAudioLLM/SenseVoiceSmall",
+      "apiKey": "",
+      "timeoutMs": 2200
+    }
+  },
+  "_耳朵可以配多家": "asr.final 可以写成数组，按顺序试，第一家失败/超时/只回垃圾就换下一家。元素两种写法：①普通 ASR（不写 kind）= OpenAI /v1/audio/transcriptions；②写 \"kind\": \"chat-audio\" = 把音频直接交给能听的多模态大模型（如 Qwen3-Omni），走 /chat/completions，能带场景提示、歧义句更容易听对，但更慢。",
+  "_再加一家长这样": "把 asr.final 换成一个数组：[ 现在这个对象, { \"kind\": \"chat-audio\", \"endpoint\": \"https://api.siliconflow.cn/v1/chat/completions\", \"model\": \"从模型广场复制的 Qwen3-Omni 模型名\", \"apiKey\": \"同一个 sk-\", \"timeoutMs\": 2500, \"prompt\": \"把这段中文语音逐字转写，只输出文字\" } ]。apiKey 留空的那一项自动不启用。",
+  "_思考模式": "enableThinking: false = 强制关闭模型的思考过程（Qwen3 系列默认开着，会先写几百字推理，实测 8~15 秒；关掉后不到 1 秒）。不写这一项时，模型名带 qwen3 会自动关闭。",
+  "enableThinking": false,
+  "_联网问答说明": "下面这段 search 打开后，同一个模型就多了一层能力：它自己说「不太确定」，或者你问的是价格/热量/牌子/最新这类它一定会瞎编的问题时，会先搜 3 条网页再把摘要塞回去让它重答一遍（多花 3~5 秒）。答得笃定时不搜，一个字都不会发出去。不写这段 = 行为和以前完全一样。",
+  "_search_provider": "bocha = 博查（国内、便宜、中文网页多，推荐）/ tavily / serper（Google）/ custom（填自己的 endpoint，按通用结构解析）。内置的三家都要 key，apiKey 留空 = 不启用。",
+  "search": {
+    "provider": "bocha",
+    "apiKey": "",
+    "count": 3,
+    "timeoutMs": 4000
+  },
+  "_想更准就加火山（豆包同源）": "把 asr.final 改成数组，第一项放火山，两种鉴权写法任选其一。①新版控制台（2026 起新建账号，推荐，只有一个 Key）：{\"kind\":\"volc-flash\",\"apiKey\":\"控制台-API Key 管理里复制\",\"timeoutMs\":2200}；②旧版控制台（AppID + Access Token 双凭据）：{\"kind\":\"volc-flash\",\"appId\":\"...\",\"accessToken\":\"...\",\"timeoutMs\":2200}。凭据留空的那项会自动不启用。它会把菜名/口令当热词一起送上去，中文口语明显更准。开通路径：火山引擎 → 语音识别 → 开通「录音文件识别 1.0」→ 极速版 → 试用（送 20 小时 / 半年）。没开通时接口回 45000030（resource not granted），代码会自动退到下一家，不会把耳朵弄哑。"
+}

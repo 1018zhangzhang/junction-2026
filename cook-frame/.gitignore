@@ -3,3 +3,10 @@
 *.fuiapp
 *.log
 config.json
+# 密钥文件：只在本机，永远不进仓库、不进 .fuiapp 包（模板见 llm.example.json）
+llm.json
+.env
+*.key
+
+# 用户忌口/喜好（本机数据，随应用数据目录走，不进仓库）
+taste.json

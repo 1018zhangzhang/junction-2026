@@ -1,0 +1,6 @@
+# 这个项目在 WSL/Linux 里跑，存档回滚时绝不能被转成 CRLF（否则 .sh 直接跑不了）
+* text=auto eol=lf
+*.sh text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
