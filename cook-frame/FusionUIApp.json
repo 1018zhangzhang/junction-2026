@@ -1,0 +1,18 @@
+{
+  "capabilities": [
+    "input.audio",
+    "input.navigation",
+    "input.text"
+  ],
+  "controlProfile": "generic",
+  "displayName": {
+    "en": "Cook Frame",
+    "zh-CN": "做饭框架"
+  },
+  "id": "iris.example.cookframe",
+  "minimumHostVersion": 2,
+  "role": "ordinary",
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "versionCode": 35
+}

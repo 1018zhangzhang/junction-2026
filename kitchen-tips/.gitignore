@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.fuiapp
+*.log
+
+# 含密钥，永远不要提交
+config.json
+src/config.json

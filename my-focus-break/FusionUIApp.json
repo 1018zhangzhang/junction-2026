@@ -1,0 +1,14 @@
+{
+  "capabilities": [],
+  "controlProfile": "generic",
+  "displayName": {
+    "en": "Focus Break",
+    "zh-CN": "专注休息"
+  },
+  "id": "iris.example.focusbreak",
+  "minimumHostVersion": 2,
+  "role": "ordinary",
+  "schemaVersion": 1,
+  "version": "1.0.0",
+  "versionCode": 19
+}

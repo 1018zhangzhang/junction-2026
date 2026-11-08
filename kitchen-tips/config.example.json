@@ -1,0 +1,23 @@
+{
+  "llm": {
+    "endpoint": "https://api.siliconflow.cn/v1/chat/completions",
+    "apiKey": "在这里填密钥（不要提交这个文件）",
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "timeoutMs": 20000,
+    "temperature": 0.2,
+    "retries": 1
+  },
+  "asr": {
+    "endpoint": "https://api.siliconflow.cn/v1/audio/transcriptions",
+    "apiKey": "在这里填密钥",
+    "model": "FunAudioLLM/SenseVoiceSmall",
+    "language": "zh",
+    "timeoutMs": 15000
+  },
+  "behavior": {
+    "minSteps": 3,
+    "maxSteps": 12,
+    "voiceSilenceMs": 800,
+    "voiceMaxMs": 9000
+  }
+}

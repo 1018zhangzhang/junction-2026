@@ -1,0 +1,19 @@
+# 依赖与构建产物
+node_modules/
+.venv/
+__pycache__/
+dist/
+*.fuiapp
+*.log
+
+# 大文件：语音模型（66MB，不进 git，见 README）
+vosk-model-*/
+
+# 含密钥的本地配置（只提交 config.example.json）
+config.json
+
+# 旧版备份（git 本身就是版本管理，不需要文件夹备份）
+cook-frame-backup-v4/
+
+# 乱码临时文件
+µÇÄõ¦êÞÀæ.txt
