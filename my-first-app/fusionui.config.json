@@ -1,6 +1,0 @@
-{
-  "manifest": "FusionUIApp.json",
-  "outputDirectory": "dist",
-  "schemaVersion": 1,
-  "sourceDirectory": "src"
-}
